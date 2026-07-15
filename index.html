@@ -261,7 +261,7 @@
     </div>
 
     <h1>韓語跟讀挑戰與全球排行榜</h1>
-    <p class="subtitle">Google TTS 自然女聲發音 ＆ 全球即時進度排行榜系統</p>
+    <p class="subtitle">自然女聲發音 ＆ 挑戰進度自動記憶系統</p>
 
     <!-- 模式選擇 -->
     <div class="mode-selector">
@@ -280,7 +280,7 @@
 
     <!-- 控制按鈕 -->
     <div class="controls">
-        <button class="btn btn-play" onclick="speakStandard()">🔊 播放自然女聲 (Google TTS)</button>
+        <button class="btn btn-play" onclick="speakStandard()">🔊 播放標準女聲</button>
         <button class="btn btn-record" id="record-btn" onclick="toggleRecord()">🎤 開始錄音</button>
         <button class="btn btn-playback" id="playback-btn" onclick="playMyVoice()" disabled>🎧 回放我的聲音</button>
     </div>
@@ -317,9 +317,8 @@
     // ==========================================
     const SUPABASE_URL = "YOUR_SUPABASE_PROJECT_URL"; 
     const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
-    let dbClient = null; // 修正變數命名，避免與全域的 supabase 衝突
+    let dbClient = null; 
 
-    // 初始化安全判定
     try {
         if (SUPABASE_URL !== "YOUR_SUPABASE_PROJECT_URL" && typeof supabase !== 'undefined' && supabase.createClient) {
             dbClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -347,7 +346,7 @@
     let audioChunks = [];
     let audioUrl = null;
 
-    // 登入
+    // 登入與進度回復
     function loginUser() {
         const input = document.getElementById('username-input').value.trim();
         if (!input) {
@@ -359,13 +358,38 @@
         document.getElementById('login-overlay').style.display = 'none';
         document.getElementById('main-container').style.display = 'block';
         
-        // 登入後立即初始化
+        // 讀取該玩家先前儲存的進度
+        loadSavedProgress();
+
+        // 登入後初始化
         initKeypad();
         loadSentence(0);
         initSpeechRecognition();
         updateLeaderboardView();
     }
 
+    // 載入儲存的進度
+    function loadSavedProgress() {
+        const savedData = localStorage.getItem(`korean_progress_${currentUser}`);
+        if (savedData) {
+            try {
+                expertProgress = JSON.parse(savedData);
+                console.log(`已恢復玩家 [${currentUser}] 的歷史進度`);
+            } catch(e) {
+                expertProgress = Array(20).fill(false);
+            }
+        } else {
+            expertProgress = Array(20).fill(false);
+        }
+    }
+
+    // 儲存當前進度
+    function saveProgress() {
+        if (!currentUser) return;
+        localStorage.setItem(`korean_progress_${currentUser}`, JSON.stringify(expertProgress));
+    }
+
+    // 登出
     function logout() {
         currentUser = "";
         document.getElementById('login-overlay').style.display = 'flex';
@@ -434,16 +458,23 @@
         loadSentence(currentIdx);
     }
 
-    // 🔊 自然女聲播放
+    // 🔊 優質、流暢且標準的韓語女聲播放
     function speakStandard() {
         const text = encodeURIComponent(sentences[currentIdx]);
-        const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ko&client=tw-ob&q=${text}`;
+        // 採用最新、無跨域阻擋、發音優美的女性語音接口 (Edge-TTS 女聲 SunHi)
+        const ttsUrl = `https://api.vveit.com/api/tts?voice=ko-KR-SunHiNeural&text=${text}`;
         
         const audio = new Audio(ttsUrl);
         audio.play().catch(err => {
-            console.warn("直接播放失敗，改用原生 Web Speech API 播音：", err);
+            console.warn("備用語音引擎啟動：", err);
+            // 系統底層備份：如果 API 當機，改用瀏覽器內建 TTS
             const utterance = new SpeechSynthesisUtterance(sentences[currentIdx]);
             utterance.lang = 'ko-KR';
+            // 嘗試在內建語音包中尋找女性語音
+            const voices = window.speechSynthesis.getVoices();
+            const femaleVoice = voices.find(v => v.lang === 'ko-KR' && (v.name.includes('female') || v.name.includes('SunHi') || v.name.includes('Google')));
+            if (femaleVoice) utterance.voice = femaleVoice;
+            
             window.speechSynthesis.speak(utterance);
         });
     }
@@ -522,8 +553,10 @@
         if (cleanTarget === cleanUser) {
             feedbackMsg.innerText = `🎉 合格！辨識結果："${userText}"`;
             feedbackMsg.className = "feedback text-success";
+            
             if (currentMode === 'expert') {
                 expertProgress[currentIdx] = true;
+                saveProgress(); // 即時儲存最新進度至本地
                 updateKeypadStatus();
                 updateSubmitButton();
             }
@@ -547,11 +580,11 @@
         submitBtn.disabled = (passedCount !== 20);
     }
 
-    // 送出成績
+    // 送出成績 (通關後將重置進度緩存)
     async function submitToLeaderboard() {
         const finishTime = new Date().toLocaleString('zh-TW', { hour12: false });
         
-        // 1. 本地儲存 (LocalStorage)
+        // 1. 本地排行榜儲存
         let list = JSON.parse(localStorage.getItem('korean_global_board')) || [];
         list.push({ name: currentUser, time: finishTime });
         localStorage.setItem('korean_global_board', JSON.stringify(list));
@@ -571,8 +604,9 @@
         alert(`恭喜 ${currentUser}！20句高手模式大滿貫通關！`);
         updateLeaderboardView();
 
-        // 重置
+        // 通關成功後，重置該名字的進行中進度
         expertProgress = Array(20).fill(false);
+        saveProgress();
         updateKeypadStatus();
         updateSubmitButton();
         loadSentence(0);
