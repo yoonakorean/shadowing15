@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>韓語跟讀挑戰與排行榜</title>
+    <style>
+        :root {
+            --primary: #4F46E5;
+            --primary-hover: #4338CA;
+            --success: #10B981;
+            --gray-light: #F3F4F6;
+            --text-dark: #1F2937;
+        }
+
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            background-color: #F9FAFB;
+            color: var(--text-dark);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            max-width: 800px;
+            width: 100%;
+            background: white;
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+        }
+
+        h1 {
+            text-align: center;
+            color: var(--primary);
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #6B7280;
+            margin-bottom: 25px;
+        }
+
+        /* 模式切換 */
+        .mode-selector {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .mode-btn {
+            padding: 10px 20px;
+            border: 2px solid #E5E7EB;
+            border-radius: 30px;
+            background: white;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+
+        .mode-btn.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        /* 數字鍵盤 */
+        .keypad {
+            display: grid;
+            grid-template-columns: repeat(10, 1fr);
+            gap: 8px;
+            margin-bottom: 25px;
+        }
+
+        @media (max-width: 600px) {
+            .keypad { grid-template-columns: repeat(5, 1fr); }
+        }
+
+        .num-btn {
+            padding: 12px 0;
+            border: none;
+            background: var(--gray-light);
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        .num-btn.active {
+            outline: 3px solid var(--primary);
+        }
+
+        .num-btn.passed {
+            background: #D1FAE5;
+            color: #065F46;
+        }
+
+        /* 句子展示區 */
+        .sentence-box {
+            background: var(--gray-light);
+            padding: 40px 20px;
+            border-radius: 12px;
+            text-align: center;
+            margin-bottom: 25px;
+            min-height: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .sentence-text {
+            font-size: 28px;
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+
+        .sentence-hidden {
+            filter: blur(8px);
+            user-select: none;
+        }
+
+        .hint-badge {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            background: #FFE4E6;
+            color: #9F1239;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        /* 控制按鈕 */
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+
+        .btn-play { background: #3B82F6; color: white; }
+        .btn-play:hover { background: #2563EB; }
+        .btn-record { background: #EF4444; color: white; }
+        .btn-record.recording { animation: pulse 1.5s infinite; }
+        .btn-playback { background: #10B981; color: white; }
+        .btn-playback:disabled { background: #E5E7EB; color: #9CA3AF; cursor: not-allowed; }
+
+        @keyframes pulse {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+
+        /* 回應反饋 */
+        .feedback {
+            text-align: center;
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 25px;
+            height: 30px;
+        }
+        .text-success { color: var(--success); }
+        .text-danger { color: #EF4444; }
+
+        /* 完成與排行 */
+        .submit-section {
+            border-top: 2px solid #F3F4F6;
+            padding-top: 25px;
+            text-align: center;
+        }
+
+        .btn-submit {
+            background: var(--success);
+            color: white;
+            font-size: 18px;
+            padding: 15px 40px;
+            border-radius: 30px;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+            transition: all 0.2s;
+        }
+
+        .btn-submit:disabled {
+            background: #E5E7EB;
+            color: #9CA3AF;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .leaderboard {
+            margin-top: 40px;
+        }
+
+        .leaderboard h3 {
+            text-align: center;
+            margin-bottom: 15px;
+            color: #374151;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: center;
+            border-bottom: 1px solid #E5E7EB;
+        }
+
+        th { background-color: var(--gray-light); color: #4B5563; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🇰🇷 韓語跟讀大挑戰</h1>
+    <p class="subtitle">聽標準發音、練習錄音，挑戰高手模式登上排行榜吧！</p>
+
+    <!-- 模式選擇 -->
+    <div class="mode-selector">
+        <button class="mode-btn active" id="btn-practice-mode" onclick="setMode('practice')">📝 練習模式 (明文)</button>
+        <button class="mode-btn" id="btn-expert-mode" onclick="setMode('expert')">🔥 高手模式 (隱藏)</button>
+    </div>
+
+    <!-- 句子數字導覽鍵盤 -->
+    <div class="keypad" id="keypad"></div>
+
+    <!-- 句子展示框 -->
+    <div class="sentence-box">
+        <div class="hint-badge" id="mode-hint">練習中</div>
+        <div class="sentence-text" id="sentence-display">載入中...</div>
+    </div>
+
+    <!-- 控制按鈕 -->
+    <div class="controls">
+        <button class="btn btn-play" onclick="speakStandard()">🔊 播放標準音</button>
+        <button class="btn btn-record" id="record-btn" onclick="toggleRecord()">🎤 開始錄音</button>
+        <button class="btn btn-playback" id="playback-btn" onclick="playMyVoice()" disabled>🎧 回放我的聲音</button>
+    </div>
+
+    <!-- 比對反饋 -->
+    <div class="feedback" id="feedback-message">選擇上方數字開始挑戰！</div>
+
+    <!-- 送出挑戰 -->
+    <div class="submit-section">
+        <button class="btn-submit" id="submit-btn" onclick="submitToLeaderboard()" disabled>🏆 完成挑戰並送出成績 (0/20)</button>
+    </div>
+
+    <!-- 排行榜 -->
+    <div class="leaderboard">
+        <h3>🏆 今日進度排行榜</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th width="20%">名次</th>
+                    <th width="50%">玩家暱稱</th>
+                    <th width="30%">完成時間</th>
+                </tr>
+            </thead>
+            <tbody id="leaderboard-body">
+                <!-- 資料會動態插入 -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    // 20句韓文資料
+    const sentences = [
+        "이름은 뭐예요?", "어느 나라 사람이에요?", "어디에서 왔어요?", "직업은 뭐예요?",
+        "지수는 경찰이에요.", "지수는 태국 사람이에요.", "마크는 의사예요.", "마크는 호주 사람이에요.",
+        "영민은 매니저예요.", "영민은 중국 사람이에요.", "리쿠는 사장님이에요.", "리쿠는 일본 사람이에요.",
+        "아트는 간호사예요.", "아트는 캐나다 사람이에요.", "서리는 비서예요.", "서리는 필리핀 사람이에요.",
+        "민수는 변호사예요.", "민수는 베트남 사람이에요.", "아담은 공무원이에요.", "아담은 독일 사람이에요."
+    ];
+
+    let currentIdx = 0;
+    let currentMode = 'practice'; // 'practice' 練習模式, 'expert' 高手模式
+    let expertProgress = Array(20).fill(false); // 高手模式下各句通關狀態
+
+    // 錄音與語音辨識變數
+    let recognition;
+    let isRecording = false;
+    let mediaRecorder;
+    let audioChunks = [];
+    let audioUrl = null;
+
+    // 初始化
+    window.onload = function() {
+        initKeypad();
+        loadSentence(0);
+        initSpeechRecognition();
+        updateLeaderboardView();
+    };
+
+    // 建立 1~20 數字鍵盤
+    function initKeypad() {
+        const keypad = document.getElementById('keypad');
+        keypad.innerHTML = '';
+        for (let i = 0; i < 20; i++) {
+            const btn = document.createElement('button');
+            btn.className = 'num-btn';
+            btn.id = `num-btn-${i}`;
+            btn.innerText = i + 1;
+            btn.onclick = () => loadSentence(i);
+            keypad.appendChild(btn);
+        }
+        updateKeypadStatus();
+    }
+
+    // 更新數字鍵盤狀態樣式
+    function updateKeypadStatus() {
+        for (let i = 0; i < 20; i++) {
+            const btn = document.getElementById(`num-btn-${i}`);
+            if (!btn) continue;
+            
+            // 標示當前選擇句
+            if (i === currentIdx) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+
+            // 標示高手模式通關狀態
+            if (currentMode === 'expert' && expertProgress[i]) {
+                btn.classList.add('passed');
+            } else {
+                btn.classList.remove('passed');
+            }
+        }
+    }
+
+    // 載入特定句子
+    function loadSentence(index) {
+        currentIdx = index;
+        const display = document.getElementById('sentence-display');
+        const hint = document.getElementById('mode-hint');
+        
+        if (currentMode === 'practice') {
+            display.innerText = `${index + 1}. ${sentences[index]}`;
+            display.classList.remove('sentence-hidden');
+            hint.innerText = "練習模式";
+            hint.style.background = "#DBEAFE";
+            hint.style.color = "#1E40AF";
+        } else {
+            display.innerText = `${index + 1}. 🔒 [ 語音播音後，請跟讀此句 ]`;
+            display.classList.add('sentence-hidden');
+            hint.innerText = "高手挑戰";
+            hint.style.background = "#FEE2E2";
+            hint.style.color = "#991B1B";
+        }
+
+        // 清空回放與反饋
+        document.getElementById('playback-btn').disabled = true;
+        audioUrl = null;
+        document.getElementById('feedback-message').innerText = "準備好後，點擊「開始錄音」";
+        document.getElementById('feedback-message').className = "feedback";
+        
+        updateKeypadStatus();
+    }
+
+    // 切換模式
+    function setMode(mode) {
+        currentMode = mode;
+        document.getElementById('btn-practice-mode').classList.toggle('active', mode === 'practice');
+        document.getElementById('btn-expert-mode').classList.toggle('active', mode === 'expert');
+        
+        if (mode === 'practice') {
+            document.getElementById('submit-btn').disabled = true;
+        } else {
+            updateSubmitButton();
+        }
+        loadSentence(currentIdx);
+    }
+
+    // 播放標準韓文音
+    function speakStandard() {
+        const utterance = new SpeechSynthesisUtterance(sentences[currentIdx]);
+        utterance.lang = 'ko-KR';
+        window.speechSynthesis.speak(utterance);
+    }
+
+    // 初始化語音辨識器與錄音器
+    function initSpeechRecognition() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            alert("您的瀏覽器不支援語音辨識功能，請使用 Google Chrome 瀏覽器開啟此網頁。");
+            return;
+        }
+        recognition = new SpeechRecognition();
+        recognition.lang = 'ko-KR'; // 設定辨識語言為韓文
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        recognition.onresult = function(event) {
+            const userSpeech = event.results[0][0].transcript.trim();
+            compareSpeech(userSpeech);
+        };
+
+        recognition.onerror = function() {
+            if (isRecording) {
+                document.getElementById('feedback-message').innerText = "⚠️ 辨識失敗，請再試一次或大聲一點點。";
+                document.getElementById('feedback-message').className = "feedback text-danger";
+                stopRecordingProcess();
+            }
+        };
+
+        // 綁定原生麥克風錄音（供回放自我聲音用）
+        navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(stream => {
+                mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+                mediaRecorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    audioUrl = URL.createObjectURL(audioBlob);
+                    document.getElementById('playback-btn').disabled = false;
+                };
+            }).catch(err => {
+                console.warn("無法取得錄音裝置（但不影響語音辨識判定）：", err);
+            });
+    }
+
+    // 控制錄音開關
+    function toggleRecord() {
+        if (!recognition) return;
+
+        const recordBtn = document.getElementById('record-btn');
+        if (!isRecording) {
+            // 開始錄音
+            isRecording = true;
+            recordBtn.innerText = "🛑 停止辨識中...";
+            recordBtn.classList.add('recording');
+            document.getElementById('feedback-message').innerText = "🎤 聆聽中，請開始朗讀...";
+            document.getElementById('feedback-message').className = "feedback";
+
+            // 啟動 Web Speech 語音辨識
+            recognition.start();
+
+            // 啟動原生錄音（供練習模式回放）
+            if (mediaRecorder && mediaRecorder.state === "inactive") {
+                audioChunks = [];
+                mediaRecorder.start();
+            }
+        } else {
+            // 手動停止錄音
+            stopRecordingProcess();
+        }
+    }
+
+    function stopRecordingProcess() {
+        isRecording = false;
+        const recordBtn = document.getElementById('record-btn');
+        recordBtn.innerText = "🎤 開始錄音";
+        recordBtn.classList.remove('recording');
+
+        try { recognition.stop(); } catch(e){}
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+            mediaRecorder.stop();
+        }
+    }
+
+    // 比對韓文語音
+    function compareSpeech(userText) {
+        stopRecordingProcess();
+        
+        // 清理文字格式進行精確比對（去除空格、問號及句號）
+        const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；]/g, '');
+        const cleanUser = userText.replace(/[\s\?\.；]/g, '');
+
+        const feedbackMsg = document.getElementById('feedback-message');
+
+        if (cleanTarget === cleanUser) {
+            feedbackMsg.innerText = `🎉 答對了！辨識結果："${userText}"`;
+            feedbackMsg.className = "feedback text-success";
+
+            // 若在高手模式，則標記為通關
+            if (currentMode === 'expert') {
+                expertProgress[currentIdx] = true;
+                updateKeypadStatus();
+                updateSubmitButton();
+            }
+        } else {
+            feedbackMsg.innerText = `❌ 判定不合格。辨識到的是："${userText}" (請再試一次)`;
+            feedbackMsg.className = "feedback text-danger";
+        }
+    }
+
+    // 播放自己錄音的音訊
+    function playMyVoice() {
+        if (audioUrl) {
+            const audio = new Audio(audioUrl);
+            audio.play();
+        }
+    }
+
+    // 更新送出成績按鈕與過關進度
+    function updateSubmitButton() {
+        const passedCount = expertProgress.filter(Boolean).length;
+        const submitBtn = document.getElementById('submit-btn');
+        submitBtn.innerText = `🏆 完成挑戰並送出成績 (${passedCount}/20)`;
+        
+        if (passedCount === 20) {
+            submitBtn.disabled = false;
+        } else {
+            submitBtn.disabled = true;
+        }
+    }
+
+    // 提交成績至 LocalStorage 本地排行榜
+    function submitToLeaderboard() {
+        const name = prompt("恭喜你通過高手模式 20 句全數通關！\n請輸入您的暱稱以登錄進度排行榜：");
+        if (!name) return;
+
+        const record = {
+            name: name,
+            time: new Date().toLocaleString('zh-TW', { hour12: false })
+        };
+
+        // 讀取並更新排行榜
+        let list = JSON.parse(localStorage.getItem('korean_challenge_board')) || [];
+        list.push(record);
+        localStorage.setItem('korean_challenge_board', JSON.stringify(list));
+
+        alert("成績登錄成功！");
+        updateLeaderboardView();
+
+        // 重新初始化進度，可供再次挑戰
+        expertProgress = Array(20).fill(false);
+        updateKeypadStatus();
+        updateSubmitButton();
+        loadSentence(0);
+    }
+
+    // 渲染排行榜視圖
+    function updateLeaderboardView() {
+        const tbody = document.getElementById('leaderboard-body');
+        const list = JSON.parse(localStorage.getItem('korean_challenge_board')) || [];
+        tbody.innerHTML = '';
+
+        if (list.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="3" style="color: #9CA3AF;">目前暫無排行資料，快來成為第一位通關者！</td></tr>`;
+            return;
+        }
+
+        // 依照登錄時間排序（最新的在最上面）
+        list.reverse();
+
+        list.forEach((item, index) => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td><strong>#${index + 1}</strong></td>
+                <td>${escapeHTML(item.name)}</td>
+                <td>${item.time}</td>
+            `;
+            tbody.appendChild(row);
+        });
+    }
+
+    // 防止 XSS 安全防護
+    function escapeHTML(str) {
+        return str.replace(/[&<>'"]/g, 
+            tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+        );
+    }
+</script>
+
+</body>
+</html>
