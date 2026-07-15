@@ -358,10 +358,8 @@
         document.getElementById('login-overlay').style.display = 'none';
         document.getElementById('main-container').style.display = 'block';
         
-        // 讀取該玩家先前儲存的進度
+        // 核心修正：先讀取進度，再初始化 UI
         loadSavedProgress();
-
-        // 登入後初始化
         initKeypad();
         loadSentence(0);
         initSpeechRecognition();
@@ -374,7 +372,7 @@
         if (savedData) {
             try {
                 expertProgress = JSON.parse(savedData);
-                console.log(`已恢復玩家 [${currentUser}] 的歷史進度`);
+                console.log(`成功載入玩家 [${currentUser}] 的歷史進度：`, expertProgress);
             } catch(e) {
                 expertProgress = Array(20).fill(false);
             }
@@ -411,6 +409,7 @@
             keypad.appendChild(btn);
         }
         updateKeypadStatus();
+        updateSubmitButton(); // 同步更新下方送出按鈕的完成數 (x/20)
     }
 
     function updateKeypadStatus() {
@@ -450,6 +449,7 @@
         currentMode = mode;
         document.getElementById('btn-practice-mode').classList.toggle('active', mode === 'practice');
         document.getElementById('btn-expert-mode').classList.toggle('active', mode === 'expert');
+        updateKeypadStatus();
         if (mode === 'practice') {
             document.getElementById('submit-btn').disabled = true;
         } else {
@@ -461,20 +461,16 @@
     // 🔊 優質、流暢且標準的韓語女聲播放
     function speakStandard() {
         const text = encodeURIComponent(sentences[currentIdx]);
-        // 採用最新、無跨域阻擋、發音優美的女性語音接口 (Edge-TTS 女聲 SunHi)
         const ttsUrl = `https://api.vveit.com/api/tts?voice=ko-KR-SunHiNeural&text=${text}`;
         
         const audio = new Audio(ttsUrl);
         audio.play().catch(err => {
             console.warn("備用語音引擎啟動：", err);
-            // 系統底層備份：如果 API 當機，改用瀏覽器內建 TTS
             const utterance = new SpeechSynthesisUtterance(sentences[currentIdx]);
             utterance.lang = 'ko-KR';
-            // 嘗試在內建語音包中尋找女性語音
             const voices = window.speechSynthesis.getVoices();
             const femaleVoice = voices.find(v => v.lang === 'ko-KR' && (v.name.includes('female') || v.name.includes('SunHi') || v.name.includes('Google')));
             if (femaleVoice) utterance.voice = femaleVoice;
-            
             window.speechSynthesis.speak(utterance);
         });
     }
@@ -487,11 +483,17 @@
         }
         recognition = new SpeechRecognition();
         recognition.lang = 'ko-KR';
+        
+        // 【錄音精準度修正】:
+        // 1. 啟用 continuous，防止語氣稍有頓挫就被瀏覽器強制切斷
+        recognition.continuous = true; 
         recognition.interimResults = false;
         recognition.maxAlternatives = 1;
 
         recognition.onresult = function(event) {
-            const userSpeech = event.results[0][0].transcript.trim();
+            // 抓取最後一次辨識成功的完整語音結果
+            const latestResultIdx = event.results.length - 1;
+            const userSpeech = event.results[latestResultIdx][0].transcript.trim();
             compareSpeech(userSpeech);
         };
 
@@ -515,23 +517,41 @@
             }).catch(err => console.warn("未取得麥克風回放權限：", err));
     }
 
+    let startDelayTimeout;
     function toggleRecord() {
         if (!recognition) return;
         const recordBtn = document.getElementById('record-btn');
+        const feedbackMsg = document.getElementById('feedback-message');
+
         if (!isRecording) {
             isRecording = true;
-            recordBtn.innerText = "🛑 停止辨識中...";
+            recordBtn.innerText = "🛑 停止錄音中...";
             recordBtn.classList.add('recording');
-            document.getElementById('feedback-message').innerText = "🎤 聆聽中，請開始跟讀...";
-            document.getElementById('feedback-message').className = "feedback";
+            feedbackMsg.innerText = "🎙️ 系統預熱中，請稍候...";
+            feedbackMsg.className = "feedback";
+            
+            // 核心優化：開啟硬體錄音
             recognition.start();
-
             if (mediaRecorder && mediaRecorder.state === "inactive") {
                 audioChunks = [];
                 mediaRecorder.start();
             }
+
+            // 【防止開頭吃字修正】：延遲 250ms 提示再說話，確保麥克風已完全喚醒
+            startDelayTimeout = setTimeout(() => {
+                if (isRecording) {
+                    feedbackMsg.innerText = "🎤 請開始大聲跟讀！";
+                }
+            }, 250);
+
         } else {
-            stopRecordingProcess();
+            // 【防止結尾吃字修正】：點擊停止後，刻意延遲 400ms 再真正關閉錄音，完整保留最後語音
+            feedbackMsg.innerText = "⚙️ 正在彙整語音...";
+            clearTimeout(startDelayTimeout);
+            
+            setTimeout(() => {
+                stopRecordingProcess();
+            }, 400); 
         }
     }
 
@@ -546,8 +566,10 @@
 
     function compareSpeech(userText) {
         stopRecordingProcess();
-        const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；]/g, '');
-        const cleanUser = userText.replace(/[\s\?\.；]/g, '');
+        
+        // 韓文字元淨化比對
+        const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；!,，。]/g, '');
+        const cleanUser = userText.replace(/[\s\?\.；!,，。]/g, '');
         const feedbackMsg = document.getElementById('feedback-message');
 
         if (cleanTarget === cleanUser) {
@@ -556,7 +578,7 @@
             
             if (currentMode === 'expert') {
                 expertProgress[currentIdx] = true;
-                saveProgress(); // 即時儲存最新進度至本地
+                saveProgress(); // 即時存檔
                 updateKeypadStatus();
                 updateSubmitButton();
             }
@@ -580,7 +602,7 @@
         submitBtn.disabled = (passedCount !== 20);
     }
 
-    // 送出成績 (通關後將重置進度緩存)
+    // 送出成績
     async function submitToLeaderboard() {
         const finishTime = new Date().toLocaleString('zh-TW', { hour12: false });
         
@@ -604,7 +626,7 @@
         alert(`恭喜 ${currentUser}！20句高手模式大滿貫通關！`);
         updateLeaderboardView();
 
-        // 通關成功後，重置該名字的進行中進度
+        // 重置
         expertProgress = Array(20).fill(false);
         saveProgress();
         updateKeypadStatus();
@@ -619,7 +641,6 @@
 
         let list = [];
 
-        // 優先從 Supabase 雲端資料庫讀取
         if (dbClient) {
             try {
                 const { data, error } = await dbClient
@@ -632,10 +653,9 @@
             }
         }
 
-        // 本地備份讀取
         if (list.length === 0) {
             list = JSON.parse(localStorage.getItem('korean_global_board')) || [];
-            list.reverse(); // 最新通關的在前
+            list.reverse(); 
         }
 
         if (list.length === 0) {
