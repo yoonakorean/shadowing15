@@ -3,11 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>韓語跟讀挑戰與排行榜</title>
+    <title>韓語聽力跟讀挑戰系統</title>
+    <!-- 引入 Supabase CDN (用於線上全球排行榜) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         :root {
-            --primary: #4F46E5;
-            --primary-hover: #4338CA;
+            --primary: #6366F1;
+            --primary-hover: #4F46E5;
             --success: #10B981;
             --gray-light: #F3F4F6;
             --text-dark: #1F2937;
@@ -15,13 +17,63 @@
 
         body {
             font-family: 'Helvetica Neue', Arial, sans-serif;
-            background-color: #F9FAFB;
+            background-color: #EEF2F6;
             color: var(--text-dark);
             margin: 0;
             padding: 20px;
             display: flex;
             flex-direction: column;
             align-items: center;
+        }
+
+        /* 登入遮罩 */
+        .login-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(8px);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            transition: opacity 0.3s ease;
+        }
+
+        .login-box {
+            background: white;
+            padding: 40px;
+            border-radius: 16px;
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+
+        .login-box h2 { color: var(--primary); margin-bottom: 10px; }
+        .login-box p { color: #6B7280; font-size: 14px; margin-bottom: 25px; }
+        .login-input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #E5E7EB;
+            border-radius: 8px;
+            font-size: 16px;
+            margin-bottom: 20px;
+            box-sizing: border-box;
+        }
+        .login-input:focus {
+            border-color: var(--primary);
+            outline: none;
+        }
+        .btn-login {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
         }
 
         .container {
@@ -31,19 +83,23 @@
             padding: 30px;
             border-radius: 16px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+            display: none; /* 登入前隱藏 */
         }
 
-        h1 {
-            text-align: center;
-            color: var(--primary);
-            margin-bottom: 5px;
+        /* 使用者狀態列 */
+        .user-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #EEF2F6;
+            padding: 10px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: bold;
         }
 
-        .subtitle {
-            text-align: center;
-            color: #6B7280;
-            margin-bottom: 25px;
-        }
+        h1 { text-align: center; color: var(--primary); margin-bottom: 5px; }
+        .subtitle { text-align: center; color: #6B7280; margin-bottom: 25px; }
 
         /* 模式切換 */
         .mode-selector {
@@ -92,14 +148,8 @@
             text-align: center;
         }
 
-        .num-btn.active {
-            outline: 3px solid var(--primary);
-        }
-
-        .num-btn.passed {
-            background: #D1FAE5;
-            color: #065F46;
-        }
+        .num-btn.active { outline: 3px solid var(--primary); }
+        .num-btn.passed { background: #D1FAE5; color: #065F46; }
 
         /* 句子展示區 */
         .sentence-box {
@@ -115,27 +165,15 @@
             position: relative;
         }
 
-        .sentence-text {
-            font-size: 28px;
-            font-weight: bold;
-            letter-spacing: 1px;
-        }
-
-        .sentence-hidden {
-            filter: blur(8px);
-            user-select: none;
-        }
+        .sentence-text { font-size: 26px; font-weight: bold; letter-spacing: 1px; }
+        .sentence-hidden { filter: blur(8px); user-select: none; }
 
         .hint-badge {
             position: absolute;
-            top: 10px;
-            right: 15px;
-            background: #FFE4E6;
-            color: #9F1239;
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: bold;
+            top: 10px; right: 15px;
+            background: #FFE4E6; color: #9F1239;
+            padding: 4px 10px; border-radius: 12px;
+            font-size: 12px; font-weight: bold;
         }
 
         /* 控制按鈕 */
@@ -173,23 +211,13 @@
             100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
         }
 
-        /* 回應反饋 */
-        .feedback {
-            text-align: center;
-            font-size: 18px;
-            font-weight: bold;
-            margin-bottom: 25px;
-            height: 30px;
-        }
+        /* 反饋 */
+        .feedback { text-align: center; font-size: 18px; font-weight: bold; margin-bottom: 25px; height: 30px; }
         .text-success { color: var(--success); }
         .text-danger { color: #EF4444; }
 
         /* 完成與排行 */
-        .submit-section {
-            border-top: 2px solid #F3F4F6;
-            padding-top: 25px;
-            text-align: center;
-        }
+        .submit-section { border-top: 2px solid #F3F4F6; padding-top: 25px; text-align: center; }
 
         .btn-submit {
             background: var(--success);
@@ -204,43 +232,36 @@
             transition: all 0.2s;
         }
 
-        .btn-submit:disabled {
-            background: #E5E7EB;
-            color: #9CA3AF;
-            cursor: not-allowed;
-            box-shadow: none;
-        }
+        .btn-submit:disabled { background: #E5E7EB; color: #9CA3AF; cursor: not-allowed; box-shadow: none; }
 
-        .leaderboard {
-            margin-top: 40px;
-        }
-
-        .leaderboard h3 {
-            text-align: center;
-            margin-bottom: 15px;
-            color: #374151;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-
-        th, td {
-            padding: 12px;
-            text-align: center;
-            border-bottom: 1px solid #E5E7EB;
-        }
-
-        th { background-color: var(--gray-light); color: #4B5563; }
+        .leaderboard { margin-top: 40px; }
+        .leaderboard h3 { text-align: center; margin-bottom: 15px; color: #374151; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; background: #fff; border-radius: 8px; overflow: hidden; }
+        th, td { padding: 12px; text-align: center; border-bottom: 1px solid #E5E7EB; }
+        th { background-color: #F3F4F6; color: #4B5563; }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <h1>🇰🇷 韓語跟讀大挑戰</h1>
-    <p class="subtitle">聽標準發音、練習錄音，挑戰高手模式登上排行榜吧！</p>
+<!-- 登入遮罩 -->
+<div class="login-overlay" id="login-overlay">
+    <div class="login-box">
+        <h2>🇰🇷 開始你的韓語挑戰</h2>
+        <p>請輸入您的暱稱/名字以開始進行跟讀。成績將會自動與全球玩家進行排行比對！</p>
+        <input type="text" class="login-input" id="username-input" placeholder="請輸入名字 (例如：小明)...">
+        <button class="btn-login" onclick="loginUser()">進入挑戰</button>
+    </div>
+</div>
+
+<!-- 主介面 -->
+<div class="container" id="main-container">
+    <div class="user-bar">
+        <span id="user-display">👤 玩家：未登入</span>
+        <span style="color: #6B7280; cursor: pointer;" onclick="logout()">➔ 登出</span>
+    </div>
+
+    <h1>韓語跟讀挑戰與全球排行榜</h1>
+    <p class="subtitle">Google TTS 自然女聲發音 ＆ 全球即時進度排行榜系統</p>
 
     <!-- 模式選擇 -->
     <div class="mode-selector">
@@ -248,7 +269,7 @@
         <button class="mode-btn" id="btn-expert-mode" onclick="setMode('expert')">🔥 高手模式 (隱藏)</button>
     </div>
 
-    <!-- 句子數字導覽鍵盤 -->
+    <!-- 數字鍵盤 -->
     <div class="keypad" id="keypad"></div>
 
     <!-- 句子展示框 -->
@@ -259,7 +280,7 @@
 
     <!-- 控制按鈕 -->
     <div class="controls">
-        <button class="btn btn-play" onclick="speakStandard()">🔊 播放標準音</button>
+        <button class="btn btn-play" onclick="speakStandard()">🔊 播放自然女聲 (Google TTS)</button>
         <button class="btn btn-record" id="record-btn" onclick="toggleRecord()">🎤 開始錄音</button>
         <button class="btn btn-playback" id="playback-btn" onclick="playMyVoice()" disabled>🎧 回放我的聲音</button>
     </div>
@@ -272,9 +293,9 @@
         <button class="btn-submit" id="submit-btn" onclick="submitToLeaderboard()" disabled>🏆 完成挑戰並送出成績 (0/20)</button>
     </div>
 
-    <!-- 排行榜 -->
+    <!-- 全球線上排行榜 -->
     <div class="leaderboard">
-        <h3>🏆 今日進度排行榜</h3>
+        <h3>🏆 全球線上排行榜 (即時連線)</h3>
         <table>
             <thead>
                 <tr>
@@ -284,40 +305,71 @@
                 </tr>
             </thead>
             <tbody id="leaderboard-body">
-                <!-- 資料會動態插入 -->
+                <tr><td colspan="3" style="color: #9CA3AF;">載入中...</td></tr>
             </tbody>
         </table>
     </div>
 </div>
 
 <script>
-    // 20句韓文資料
+    // ==========================================
+    // ⚠️ SUPABASE 雲端資料庫設定區
+    // ==========================================
+    // 請至 https://supabase.com 註冊免費帳號，並將下方的網址與 Key 填入即可開通全球即時排行榜！
+    const SUPABASE_URL = "YOUR_SUPABASE_PROJECT_URL"; 
+    const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+    let supabase = null;
+
+    // 嘗試連接 Supabase
+    if (SUPABASE_URL !== "YOUR_SUPABASE_PROJECT_URL") {
+        supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    }
+
     const sentences = [
         "이름은 뭐예요?", "어느 나라 사람이에요?", "어디에서 왔어요?", "직업은 뭐예요?",
         "지수는 경찰이에요.", "지수는 태국 사람이에요.", "마크는 의사예요.", "마크는 호주 사람이에요.",
-        "영민은 매니저예요.", "영민은 중국 사람이에요.", "리쿠는 사장님이에요.", "리쿠는 일본 사람이에요.",
+        "영敏은 매니저예요.", "영민은 중국 사람이에요.", "리쿠는 사장님이에요.", "리쿠는 일본 사람이에요.",
         "아트는 간호사예요.", "아트는 캐나다 사람이에요.", "서리는 비서예요.", "서리는 필리핀 사람이에요.",
         "민수는 변호사예요.", "민수는 베트남 사람이에요.", "아담은 공무원이에요.", "아담은 독일 사람이에요."
     ];
 
+    let currentUser = "";
     let currentIdx = 0;
-    let currentMode = 'practice'; // 'practice' 練習模式, 'expert' 高手模式
-    let expertProgress = Array(20).fill(false); // 高手模式下各句通關狀態
+    let currentMode = 'practice';
+    let expertProgress = Array(20).fill(false);
 
-    // 錄音與語音辨識變數
     let recognition;
     let isRecording = false;
     let mediaRecorder;
     let audioChunks = [];
     let audioUrl = null;
 
-    // 初始化
-    window.onload = function() {
+    // 登入
+    function loginUser() {
+        const input = document.getElementById('username-input').value.trim();
+        if (!input) {
+            alert("請輸入您的名字！");
+            return;
+        }
+        currentUser = input;
+        document.getElementById('user-display').innerText = `👤 玩家：${currentUser}`;
+        document.getElementById('login-overlay').style.display = 'none';
+        document.getElementById('main-container').style.display = 'block';
+        
+        // 初始化
         initKeypad();
         loadSentence(0);
         initSpeechRecognition();
         updateLeaderboardView();
-    };
+    }
+
+    function logout() {
+        currentUser = "";
+        document.getElementById('login-overlay').style.display = 'flex';
+        document.getElementById('main-container').style.display = 'none';
+        document.getElementById('username-input').value = "";
+        expertProgress = Array(20).fill(false);
+    }
 
     // 建立 1~20 數字鍵盤
     function initKeypad() {
@@ -334,29 +386,15 @@
         updateKeypadStatus();
     }
 
-    // 更新數字鍵盤狀態樣式
     function updateKeypadStatus() {
         for (let i = 0; i < 20; i++) {
             const btn = document.getElementById(`num-btn-${i}`);
             if (!btn) continue;
-            
-            // 標示當前選擇句
-            if (i === currentIdx) {
-                btn.classList.add('active');
-            } else {
-                btn.classList.remove('active');
-            }
-
-            // 標示高手模式通關狀態
-            if (currentMode === 'expert' && expertProgress[i]) {
-                btn.classList.add('passed');
-            } else {
-                btn.classList.remove('passed');
-            }
+            btn.classList.toggle('active', i === currentIdx);
+            btn.classList.toggle('passed', currentMode === 'expert' && expertProgress[i]);
         }
     }
 
-    // 載入特定句子
     function loadSentence(index) {
         currentIdx = index;
         const display = document.getElementById('sentence-display');
@@ -366,31 +404,25 @@
             display.innerText = `${index + 1}. ${sentences[index]}`;
             display.classList.remove('sentence-hidden');
             hint.innerText = "練習模式";
-            hint.style.background = "#DBEAFE";
-            hint.style.color = "#1E40AF";
+            hint.style.background = "#DBEAFE"; hint.style.color = "#1E40AF";
         } else {
             display.innerText = `${index + 1}. 🔒 [ 語音播音後，請跟讀此句 ]`;
             display.classList.add('sentence-hidden');
             hint.innerText = "高手挑戰";
-            hint.style.background = "#FEE2E2";
-            hint.style.color = "#991B1B";
+            hint.style.background = "#FEE2E2"; hint.style.color = "#991B1B";
         }
 
-        // 清空回放與反饋
         document.getElementById('playback-btn').disabled = true;
         audioUrl = null;
         document.getElementById('feedback-message').innerText = "準備好後，點擊「開始錄音」";
         document.getElementById('feedback-message').className = "feedback";
-        
         updateKeypadStatus();
     }
 
-    // 切換模式
     function setMode(mode) {
         currentMode = mode;
         document.getElementById('btn-practice-mode').classList.toggle('active', mode === 'practice');
         document.getElementById('btn-expert-mode').classList.toggle('active', mode === 'expert');
-        
         if (mode === 'practice') {
             document.getElementById('submit-btn').disabled = true;
         } else {
@@ -399,22 +431,30 @@
         loadSentence(currentIdx);
     }
 
-    // 播放標準韓文音
+    // 🔊 自然女聲播放 (調用 Google TTS 接口，並包裝成 Audio 物件)
     function speakStandard() {
-        const utterance = new SpeechSynthesisUtterance(sentences[currentIdx]);
-        utterance.lang = 'ko-KR';
-        window.speechSynthesis.speak(utterance);
+        const text = encodeURIComponent(sentences[currentIdx]);
+        // 使用 Google 翻譯 TTS 接口獲取極其流暢、標準的首爾女生腔發音
+        const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ko&client=tw-ob&q=${text}`;
+        
+        const audio = new Audio(ttsUrl);
+        audio.play().catch(err => {
+            console.warn("直接播放失敗，改用備份語音：", err);
+            // 備份方案：使用 Web Speech API 播音
+            const utterance = new SpeechSynthesisUtterance(sentences[currentIdx]);
+            utterance.lang = 'ko-KR';
+            window.speechSynthesis.speak(utterance);
+        });
     }
 
-    // 初始化語音辨識器與錄音器
     function initSpeechRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
-            alert("您的瀏覽器不支援語音辨識功能，請使用 Google Chrome 瀏覽器開啟此網頁。");
+            alert("瀏覽器不支援 Web Speech API。請使用 Chrome 瀏覽器！");
             return;
         }
         recognition = new SpeechRecognition();
-        recognition.lang = 'ko-KR'; // 設定辨識語言為韓文
+        recognition.lang = 'ko-KR';
         recognition.interimResults = false;
         recognition.maxAlternatives = 1;
 
@@ -425,52 +465,40 @@
 
         recognition.onerror = function() {
             if (isRecording) {
-                document.getElementById('feedback-message').innerText = "⚠️ 辨識失敗，請再試一次或大聲一點點。";
+                document.getElementById('feedback-message').innerText = "⚠️ 辨識失敗，請重新錄音。";
                 document.getElementById('feedback-message').className = "feedback text-danger";
                 stopRecordingProcess();
             }
         };
 
-        // 綁定原生麥克風錄音（供回放自我聲音用）
         navigator.mediaDevices.getUserMedia({ audio: true })
             .then(stream => {
                 mediaRecorder = new MediaRecorder(stream);
-                mediaRecorder.ondataavailable = event => {
-                    audioChunks.push(event.data);
-                };
+                mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
                 mediaRecorder.onstop = () => {
                     const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
                     audioUrl = URL.createObjectURL(audioBlob);
                     document.getElementById('playback-btn').disabled = false;
                 };
-            }).catch(err => {
-                console.warn("無法取得錄音裝置（但不影響語音辨識判定）：", err);
-            });
+            }).catch(err => console.warn("未取得麥克風回放權限：", err));
     }
 
-    // 控制錄音開關
     function toggleRecord() {
         if (!recognition) return;
-
         const recordBtn = document.getElementById('record-btn');
         if (!isRecording) {
-            // 開始錄音
             isRecording = true;
             recordBtn.innerText = "🛑 停止辨識中...";
             recordBtn.classList.add('recording');
-            document.getElementById('feedback-message').innerText = "🎤 聆聽中，請開始朗讀...";
+            document.getElementById('feedback-message').innerText = "🎤 聆聽中，請開始跟讀...";
             document.getElementById('feedback-message').className = "feedback";
-
-            // 啟動 Web Speech 語音辨識
             recognition.start();
 
-            // 啟動原生錄音（供練習模式回放）
             if (mediaRecorder && mediaRecorder.state === "inactive") {
                 audioChunks = [];
                 mediaRecorder.start();
             }
         } else {
-            // 手動停止錄音
             stopRecordingProcess();
         }
     }
@@ -480,40 +508,30 @@
         const recordBtn = document.getElementById('record-btn');
         recordBtn.innerText = "🎤 開始錄音";
         recordBtn.classList.remove('recording');
-
         try { recognition.stop(); } catch(e){}
-        if (mediaRecorder && mediaRecorder.state === "recording") {
-            mediaRecorder.stop();
-        }
+        if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
     }
 
-    // 比對韓文語音
     function compareSpeech(userText) {
         stopRecordingProcess();
-        
-        // 清理文字格式進行精確比對（去除空格、問號及句號）
         const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；]/g, '');
         const cleanUser = userText.replace(/[\s\?\.；]/g, '');
-
         const feedbackMsg = document.getElementById('feedback-message');
 
         if (cleanTarget === cleanUser) {
-            feedbackMsg.innerText = `🎉 答對了！辨識結果："${userText}"`;
+            feedbackMsg.innerText = `🎉 合格！辨識結果："${userText}"`;
             feedbackMsg.className = "feedback text-success";
-
-            // 若在高手模式，則標記為通關
             if (currentMode === 'expert') {
                 expertProgress[currentIdx] = true;
                 updateKeypadStatus();
                 updateSubmitButton();
             }
         } else {
-            feedbackMsg.innerText = `❌ 判定不合格。辨識到的是："${userText}" (請再試一次)`;
+            feedbackMsg.innerText = `❌ 不合格。您唸的是："${userText}" (請再試一次)`;
             feedbackMsg.className = "feedback text-danger";
         }
     }
 
-    // 播放自己錄音的音訊
     function playMyVoice() {
         if (audioUrl) {
             const audio = new Audio(audioUrl);
@@ -521,57 +539,74 @@
         }
     }
 
-    // 更新送出成績按鈕與過關進度
     function updateSubmitButton() {
         const passedCount = expertProgress.filter(Boolean).length;
         const submitBtn = document.getElementById('submit-btn');
         submitBtn.innerText = `🏆 完成挑戰並送出成績 (${passedCount}/20)`;
-        
-        if (passedCount === 20) {
-            submitBtn.disabled = false;
-        } else {
-            submitBtn.disabled = true;
-        }
+        submitBtn.disabled = (passedCount !== 20);
     }
 
-    // 提交成績至 LocalStorage 本地排行榜
-    function submitToLeaderboard() {
-        const name = prompt("恭喜你通過高手模式 20 句全數通關！\n請輸入您的暱稱以登錄進度排行榜：");
-        if (!name) return;
+    // 送出成績
+    async function submitToLeaderboard() {
+        const finishTime = new Date().toLocaleString('zh-TW', { hour12: false });
+        
+        // 1. 本地備份儲存 (LocalStorage)
+        let list = JSON.parse(localStorage.getItem('korean_global_board')) || [];
+        list.push({ name: currentUser, time: finishTime });
+        localStorage.setItem('korean_global_board', JSON.stringify(list));
 
-        const record = {
-            name: name,
-            time: new Date().toLocaleString('zh-TW', { hour12: false })
-        };
+        // 2. 線上即時同步 (若串接了 Supabase)
+        if (supabase) {
+            try {
+                const { error } = await supabase
+                    .from('leaderboard')
+                    .insert([{ name: currentUser, time: finishTime }]);
+                if (error) throw error;
+            } catch (err) {
+                console.error("線上資料庫同步失敗：", err);
+            }
+        }
 
-        // 讀取並更新排行榜
-        let list = JSON.parse(localStorage.getItem('korean_challenge_board')) || [];
-        list.push(record);
-        localStorage.setItem('korean_challenge_board', JSON.stringify(list));
-
-        alert("成績登錄成功！");
+        alert(`恭喜 ${currentUser}！20句高手模式大滿貫通關！`);
         updateLeaderboardView();
 
-        // 重新初始化進度，可供再次挑戰
+        // 重置
         expertProgress = Array(20).fill(false);
         updateKeypadStatus();
         updateSubmitButton();
         loadSentence(0);
     }
 
-    // 渲染排行榜視圖
-    function updateLeaderboardView() {
+    // 讀取排行榜
+    async function updateLeaderboardView() {
         const tbody = document.getElementById('leaderboard-body');
-        const list = JSON.parse(localStorage.getItem('korean_challenge_board')) || [];
         tbody.innerHTML = '';
 
-        if (list.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="3" style="color: #9CA3AF;">目前暫無排行資料，快來成為第一位通關者！</td></tr>`;
-            return;
+        let list = [];
+
+        // 優先從 Supabase 雲端資料庫讀取全球即時資料
+        if (supabase) {
+            try {
+                const { data, error } = await supabase
+                    .from('leaderboard')
+                    .select('*')
+                    .order('id', { ascending: false }); // 照通關順序排列
+                if (!error && data) list = data;
+            } catch (err) {
+                console.warn("無法取得線上排行，改用本地資料展示：", err);
+            }
         }
 
-        // 依照登錄時間排序（最新的在最上面）
-        list.reverse();
+        // 備份：讀取本地資料
+        if (list.length === 0) {
+            list = JSON.parse(localStorage.getItem('korean_global_board')) || [];
+            list.reverse(); // 最新通關的在前
+        }
+
+        if (list.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="3" style="color: #9CA3AF;">線上暫無排行，快來成為第一個通關的人！</td></tr>`;
+            return;
+        }
 
         list.forEach((item, index) => {
             const row = document.createElement('tr');
@@ -584,11 +619,8 @@
         });
     }
 
-    // 防止 XSS 安全防護
     function escapeHTML(str) {
-        return str.replace(/[&<>'"]/g, 
-            tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
-        );
+        return str.replace(/[&<>'"]/g, t => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[t] || t));
     }
 </script>
 
