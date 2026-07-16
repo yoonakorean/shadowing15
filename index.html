@@ -319,13 +319,28 @@
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFpZmZrZmh3YWttdHhmbGppeXp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxODQ0NzIsImV4cCI6MjA5OTc2MDQ3Mn0.iUh5bZufh__Gxnn6zjz0XNEl9V7802Ho97d8IB66k74";
     let dbClient = null; 
 
-    try {
-        if (SUPABASE_URL !== "YOUR_SUPABASE_PROJECT_URL" && typeof supabase !== 'undefined' && supabase.createClient) {
-            dbClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+ function initSupabase() {
+        if (SUPABASE_URL.includes("YOUR_SUPABASE_PROJECT_URL") || SUPABASE_URL === "") {
+            console.warn("⚠️ 偵測到尚未修改 Supabase URL 設定！");
+            return;
         }
-    } catch(e) {
-        console.warn("Supabase 載入失敗，將自動轉為 LocalStorage 離線模式", e);
+        
+        // 確保 CDN 已經安全載入
+        if (typeof supabase !== 'undefined' && supabase.createClient) {
+            try {
+                dbClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+                console.log("🟢 Supabase 雲端連線成功初始化！");
+            } catch(e) {
+                console.error("🔴 Supabase 初始化失敗：", e);
+            }
+        } else {
+            console.warn("⚠️ 偵測到 Supabase SDK 尚未完全載入，0.5秒後重試...");
+            setTimeout(initSupabase, 500); // 0.5 秒後自我修正重試
+        }
     }
+
+    // 啟動自我檢查連線
+    initSupabase();
 
     const sentences = [
         "이름은 뭐예요?", "어느 나라 사람이에요?", "어디에서 왔어요?", "직업은 뭐예요?",
@@ -504,38 +519,43 @@
         loadSentence(currentIdx);
     }
 
-// 🔊 播放標準女聲（完全不求人，純手機原生語音引擎版）
+// 🔊 播放標準女聲（強制女聲發音版）
     function speakStandard() {
         const targetText = sentences[currentIdx];
-        console.log("正在呼叫手機原生 TTS 引擎播放：" + targetText);
+        console.log("正在播放標準韓文女聲：" + targetText);
         
         try {
-            // 1. 強制重置手機上所有排隊中的語音發聲，防止卡死
             window.speechSynthesis.cancel(); 
 
-            // 2. 建立系統語音對象
             const utterance = new SpeechSynthesisUtterance(targetText);
-            utterance.lang = 'ko-KR'; // 設定為韓語
-            
-            // 3. 調整發音速度，讓發音更自然偏慢，方便聽讀
+            utterance.lang = 'ko-KR'; 
             utterance.rate = 0.85; 
 
-            // 4. 取得系統內建的所有發音人列表
+            // 取得當前裝置上所有的發音人
             const voices = window.speechSynthesis.getVoices();
-            // 優先挑選系統中優質的韓文女聲（包含 Siri, Google 等關鍵字）
-            const koreanVoice = voices.find(v => v.lang.startsWith('ko') && 
-                (v.name.includes('female') || v.name.includes('SunHi') || v.name.includes('Google') || v.name.includes('Siri')));
             
-            if (koreanVoice) {
-                utterance.voice = koreanVoice;
+            // 【關鍵修改】：不分模式，一律強制過濾並選取最溫柔自然的韓語「女聲」
+            const femaleKoreanVoice = voices.find(v => v.lang.startsWith('ko') && 
+                (v.name.toLowerCase().includes('female') || 
+                 v.name.toLowerCase().includes('sunhi') || 
+                 v.name.toLowerCase().includes('google') || 
+                 v.name.toLowerCase().includes('siri') ||
+                 v.name.toLowerCase().includes('yuna') ||
+                 v.name.toLowerCase().includes('hj'))); // 涵蓋大部分 Apple, Google, 微软 女聲代號
+            
+            if (femaleKoreanVoice) {
+                utterance.voice = femaleKoreanVoice;
+                console.log("成功套用標準女聲發音人: " + femaleKoreanVoice.name);
+            } else {
+                // 如果找不到女聲，才套用第一個找到的韓語發音（通常是系統預設）
+                const defaultKo = voices.find(v => v.lang.startsWith('ko'));
+                if (defaultKo) utterance.voice = defaultKo;
             }
             
-            // 5. 執行播放
             window.speechSynthesis.speak(utterance);
 
         } catch(e) {
-            console.error("手機原生 TTS 播放失敗：", e);
-            alert("您的手機不支援本機語音合成，請嘗試更換 Chrome 瀏覽器！");
+            console.error("語音播放失敗：", e);
         }
     }
     function initSpeechRecognition() {
