@@ -503,23 +503,34 @@
         loadSentence(currentIdx);
     }
 
-    // 🔊 播放標準女聲
+// 🔊 播放標準女聲（手機專用相容優化版）
     function speakStandard() {
         const text = encodeURIComponent(sentences[currentIdx]);
         const ttsUrl = `https://api.vveit.com/api/tts?voice=ko-KR-SunHiNeural&text=${text}`;
         
-        const audio = new Audio(ttsUrl);
-        audio.play().catch(err => {
-            console.warn("備用語音引擎啟動：", err);
-            const utterance = new SpeechSynthesisUtterance(sentences[currentIdx]);
-            utterance.lang = 'ko-KR';
-            const voices = window.speechSynthesis.getVoices();
-            const femaleVoice = voices.find(v => v.lang === 'ko-KR' && (v.name.includes('female') || v.name.includes('SunHi') || v.name.includes('Google')));
-            if (femaleVoice) utterance.voice = femaleVoice;
-            window.speechSynthesis.speak(utterance);
-        });
-    }
+        // 建立音訊對象
+        const audio = new Audio();
+        
+        // 【手機相容性關鍵】：在使用者觸發的事件中，先指派來源並立刻調用 load() 激活手機音訊通道
+        audio.src = ttsUrl;
+        audio.load(); 
 
+        const playPromise = audio.play();
+
+        if (playPromise !== undefined) {
+            playPromise.catch(err => {
+                console.warn("行動裝置攔截外部語音 API，啟動手機原生 TTS 引擎：", err);
+                
+                // 備用方案：使用手機系統內建的語音合成（Siri / Google 助理語音）
+                const utterance = new SpeechSynthesisUtterance(sentences[currentIdx]);
+                utterance.lang = 'ko-KR';
+                
+                // 某些 iOS 裝置需要手動觸發這行才能在靜音模式下發聲
+                window.speechSynthesis.cancel(); 
+                window.speechSynthesis.speak(utterance);
+            });
+        }
+    }
     function initSpeechRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
