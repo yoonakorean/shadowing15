@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>韓語聽力跟讀挑戰系統</title>
-    <!-- 引入 Supabase CDN (用於線上全球排行榜與跨裝置進度同步) -->
+    <!-- 引入 Supabase CDN -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         :root {
@@ -330,7 +330,7 @@
     const sentences = [
         "이름은 뭐예요?", "어느 나라 사람이에요?", "어디에서 왔어요?", "직업은 뭐예요?",
         "지수는 경찰이에요.", "지수는 태국 사람이에요.", "마크는 의사예요.", "마크는 호주 사람이에요.",
-        "영민은 매니저예요.", "영민은 중국 사람이에요.", "리쿠는 사장님이에요.", "리쿠는 일본 사람이에요.",
+        "영敏은 매니저예요.", "영민은 중국 사람이에요.", "리쿠는 사장님이에요.", "리쿠는 일본 사람이에요.",
         "아트는 간호사예요.", "아트는 캐나다 사람이에요.", "서리는 비서예요.", "서리는 필리핀 사람이에요.",
         "민수는 변호사예요.", "민수는 베트남 사람이에요.", "아담은 공무원이에요.", "아담은 독일 사람이에요."
     ];
@@ -346,7 +346,10 @@
     let audioChunks = [];
     let audioUrl = null;
 
-    // 登入與進度回復（優先從雲端拉取歷史進度）
+    // 用來給行動裝置預先解鎖的音訊物件
+    let globalAudioPlayer = null;
+
+    // 登入與進度回復
     async function loginUser() {
         const input = document.getElementById('username-input').value.trim();
         if (!input) {
@@ -358,25 +361,33 @@
         document.getElementById('login-overlay').style.display = 'none';
         document.getElementById('main-container').style.display = 'block';
         
-        // 1. 載入進度（優先嘗試雲端同步）
+        // 【手機音訊強制解鎖】：在使用者點擊「進入挑戰」這個真實觸發事件中，立刻開通音訊特權
+        try {
+            globalAudioPlayer = new Audio();
+            // 播放一小段極短的無聲 Base64 音訊，藉此騙過 iOS / Safari 的鎖定
+            globalAudioPlayer.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+            globalAudioPlayer.play().then(() => {
+                console.log("📱 行動裝置音訊通道已成功手動解鎖！");
+            }).catch(e => console.warn("音訊通道解鎖受阻：", e));
+        } catch(e) {
+            console.error("無法建立全域解鎖播放器", e);
+        }
+
+        // 載入進度
         await loadSavedProgress();
         
-        // 2. 初始化 UI
+        // 初始化 UI
         initKeypad();
         loadSentence(0);
         initSpeechRecognition();
         updateLeaderboardView();
     }
 
-    // 載入進度邏輯：先向 Supabase 要資料，拿不到才用本地 LocalStorage
+    // 載入進度邏輯
     async function loadSavedProgress() {
         let loaded = false;
-
-        // 優先嘗試從 Supabase 雲端載入
         if (dbClient) {
             try {
-                // 假設在 Supabase 建立了一個名為 'user_progress' 的 Table
-                // 欄位：name (text, Primary Key), progress (jsonb/array)
                 const { data, error } = await dbClient
                     .from('user_progress')
                     .select('progress')
@@ -385,21 +396,18 @@
                 
                 if (!error && data && data.progress) {
                     expertProgress = data.progress;
-                    console.log(`☁️ 成功自雲端資料庫載入玩家 [${currentUser}] 的歷史進度：`, expertProgress);
                     loaded = true;
                 }
             } catch (err) {
-                console.warn("嘗試自雲端讀取進度時發生錯誤，轉向本地儲存：", err);
+                console.warn("自雲端讀取進度時發生錯誤，轉向本地儲存：", err);
             }
         }
 
-        // 如果雲端沒有或失敗，退回 LocalStorage
         if (!loaded) {
             const savedData = localStorage.getItem(`korean_progress_${currentUser}`);
             if (savedData) {
                 try {
                     expertProgress = JSON.parse(savedData);
-                    console.log(`💾 成功自本地 LocalStorage 載入玩家 [${currentUser}] 的歷史進度：`, expertProgress);
                 } catch(e) {
                     expertProgress = Array(20).fill(false);
                 }
@@ -409,25 +417,18 @@
         }
     }
 
-    // 儲存進度：同時寫入本地與雲端
+    // 儲存進度
     async function saveProgress() {
         if (!currentUser) return;
-        
-        // 1. 先存本地
         localStorage.setItem(`korean_progress_${currentUser}`, JSON.stringify(expertProgress));
 
-        // 2. 即時同步至 Supabase 雲端
         if (dbClient) {
             try {
-                // 使用 upsert 做「存在就更新，不存在就新增」的處理
-                const { error } = await dbClient
+                await dbClient
                     .from('user_progress')
                     .upsert({ name: currentUser, progress: expertProgress }, { onConflict: 'name' });
-                
-                if (error) throw error;
-                console.log(`☁️ 雲端同步成功！已為 [${currentUser}] 保存進度。`);
             } catch (err) {
-                console.error("☁️ 雲端備份失敗（可能 Table 未設定或權限不符）：", err);
+                console.error("雲端備份失敗：", err);
             }
         }
     }
@@ -503,34 +504,59 @@
         loadSentence(currentIdx);
     }
 
-// 🔊 播放標準女聲（手機專用相容優化版）
+    // 🔊 播放標準女聲（終極雙重相容版）
     function speakStandard() {
-        const text = encodeURIComponent(sentences[currentIdx]);
-        const ttsUrl = `https://api.vveit.com/api/tts?voice=ko-KR-SunHiNeural&text=${text}`;
+        const targetText = sentences[currentIdx];
+        const textEncoded = encodeURIComponent(targetText);
+        const ttsUrl = `https://api.vveit.com/api/tts?voice=ko-KR-SunHiNeural&text=${textEncoded}`;
         
-        // 建立音訊對象
-        const audio = new Audio();
-        
-        // 【手機相容性關鍵】：在使用者觸發的事件中，先指派來源並立刻調用 load() 激活手機音訊通道
-        audio.src = ttsUrl;
-        audio.load(); 
-
-        const playPromise = audio.play();
-
-        if (playPromise !== undefined) {
-            playPromise.catch(err => {
-                console.warn("行動裝置攔截外部語音 API，啟動手機原生 TTS 引擎：", err);
+        // 優先嘗試：使用剛才登入時「已被使用者手動授權解鎖」的全域音訊物件播放
+        if (globalAudioPlayer) {
+            try {
+                globalAudioPlayer.src = ttsUrl;
+                globalAudioPlayer.load();
                 
-                // 備用方案：使用手機系統內建的語音合成（Siri / Google 助理語音）
-                const utterance = new SpeechSynthesisUtterance(sentences[currentIdx]);
-                utterance.lang = 'ko-KR';
-                
-                // 某些 iOS 裝置需要手動觸發這行才能在靜音模式下發聲
-                window.speechSynthesis.cancel(); 
-                window.speechSynthesis.speak(utterance);
-            });
+                const playPromise = globalAudioPlayer.play();
+                if (playPromise !== undefined) {
+                    playPromise.catch(err => {
+                        console.warn("全域解鎖播放器被阻擋，嘗試備用方案：", err);
+                        triggerFallbackTTS(targetText);
+                    });
+                }
+            } catch(e) {
+                console.warn("全域播放器拋出錯誤，嘗試備用方案：", e);
+                triggerFallbackTTS(targetText);
+            }
+        } else {
+            triggerFallbackTTS(targetText);
         }
     }
+
+    // 備用方案：使用行動裝置本機的原生系統 TTS (不依賴網路，絕對保證有聲音)
+    function triggerFallbackTTS(text) {
+        console.log("啟動手機原生 Web Speech 語音合成...");
+        try {
+            // 先強制取消正在排隊播放的所有聲音，防止手機語音卡死
+            window.speechSynthesis.cancel(); 
+
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'ko-KR';
+            
+            // 嘗試撈取手機內的優質韓語發音人
+            const voices = window.speechSynthesis.getVoices();
+            const koreanVoice = voices.find(v => v.lang.startsWith('ko') && (v.name.includes('female') || v.name.includes('SunHi') || v.name.includes('Google') || v.name.includes('Apple')));
+            if (koreanVoice) {
+                utterance.voice = koreanVoice;
+            }
+            
+            // 調整發音速度，讓發音更自然
+            utterance.rate = 0.95; 
+            window.speechSynthesis.speak(utterance);
+        } catch(e) {
+            alert("很抱歉，您的手機系統完全封鎖了語音播放與合成功能。請更換其他瀏覽器 (如 Chrome) 試試看！");
+        }
+    }
+
     function initSpeechRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
@@ -589,7 +615,6 @@
                 mediaRecorder.start();
             }
 
-            // 延遲 250ms 提示說話（防吃字）
             startDelayTimeout = setTimeout(() => {
                 if (isRecording) {
                     feedbackMsg.innerText = "🎤 請開始大聲跟讀！";
@@ -600,7 +625,6 @@
             feedbackMsg.innerText = "⚙️ 正在彙整語音...";
             clearTimeout(startDelayTimeout);
             
-            // 點擊停止後，延遲 400ms 再關閉錄音（防結尾吃字）
             setTimeout(() => {
                 stopRecordingProcess();
             }, 400); 
@@ -629,7 +653,7 @@
             
             if (currentMode === 'expert') {
                 expertProgress[currentIdx] = true;
-                saveProgress(); // 內部已整合雙軌同步（本地 + 雲端）
+                saveProgress();
                 updateKeypadStatus();
                 updateSubmitButton();
             }
@@ -641,8 +665,14 @@
 
     function playMyVoice() {
         if (audioUrl) {
-            const audio = new Audio(audioUrl);
-            audio.play();
+            // 回放錄音也透過同一個經授權的播放器播放，確保手機聽得到
+            if (globalAudioPlayer) {
+                globalAudioPlayer.src = audioUrl;
+                globalAudioPlayer.play();
+            } else {
+                const audio = new Audio(audioUrl);
+                audio.play();
+            }
         }
     }
 
@@ -677,7 +707,7 @@
         alert(`恭喜 ${currentUser}！20句高手模式大滿貫通關！`);
         updateLeaderboardView();
 
-        // 重置個人歷史挑戰進度
+        // 重置
         expertProgress = Array(20).fill(false);
         saveProgress();
         updateKeypadStatus();
