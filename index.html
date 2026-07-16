@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>韓語聽力跟讀挑戰系統</title>
-    <!-- 引入 Supabase CDN (用於線上全球排行榜) -->
+    <!-- 引入 Supabase CDN (用於線上全球排行榜與跨裝置進度同步) -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         :root {
@@ -247,8 +247,8 @@
 <div class="login-overlay" id="login-overlay">
     <div class="login-box">
         <h2>🇰🇷 開始你的韓語挑戰</h2>
-        <p>請輸入您的暱稱/名字以開始進行跟讀。成績將會自動與全球玩家進行排行比對！</p>
-        <input type="text" class="login-input" id="username-input" placeholder="請輸入名字+生日 (例如：金泰亨1230)...">
+        <p>請輸入您的暱稱/名字以開始進行跟讀。只要名字相同，在任何裝置登入都可以完美同步進度！</p>
+        <input type="text" class="login-input" id="username-input" placeholder="請輸入名字 (例如：小明)...">
         <button class="btn-login" onclick="loginUser()">進入挑戰</button>
     </div>
 </div>
@@ -261,7 +261,7 @@
     </div>
 
     <h1>韓語跟讀挑戰與全球排行榜</h1>
-    <p class="subtitle">自然女聲發音 ＆ 挑戰進度自動記憶系統</p>
+    <p class="subtitle">自然女聲發音 ＆ 全球雲端跨裝置進度同步系統</p>
 
     <!-- 模式選擇 -->
     <div class="mode-selector">
@@ -280,7 +280,7 @@
 
     <!-- 控制按鈕 -->
     <div class="controls">
-        <button class="btn btn-play" onclick="speakStandard()">🔊 播放</button>
+        <button class="btn btn-play" onclick="speakStandard()">🔊 播放標準女聲</button>
         <button class="btn btn-record" id="record-btn" onclick="toggleRecord()">🎤 開始錄音</button>
         <button class="btn btn-playback" id="playback-btn" onclick="playMyVoice()" disabled>🎧 回放我的聲音</button>
     </div>
@@ -346,8 +346,8 @@
     let audioChunks = [];
     let audioUrl = null;
 
-    // 登入與進度回復
-    function loginUser() {
+    // 登入與進度回復（優先從雲端拉取歷史進度）
+    async function loginUser() {
         const input = document.getElementById('username-input').value.trim();
         if (!input) {
             alert("請輸入您的名字！");
@@ -358,33 +358,78 @@
         document.getElementById('login-overlay').style.display = 'none';
         document.getElementById('main-container').style.display = 'block';
         
-        // 核心修正：先讀取進度，再初始化 UI
-        loadSavedProgress();
+        // 1. 載入進度（優先嘗試雲端同步）
+        await loadSavedProgress();
+        
+        // 2. 初始化 UI
         initKeypad();
         loadSentence(0);
         initSpeechRecognition();
         updateLeaderboardView();
     }
 
-    // 載入儲存的進度
-    function loadSavedProgress() {
-        const savedData = localStorage.getItem(`korean_progress_${currentUser}`);
-        if (savedData) {
+    // 載入進度邏輯：先向 Supabase 要資料，拿不到才用本地 LocalStorage
+    async function loadSavedProgress() {
+        let loaded = false;
+
+        // 優先嘗試從 Supabase 雲端載入
+        if (dbClient) {
             try {
-                expertProgress = JSON.parse(savedData);
-                console.log(`成功載入玩家 [${currentUser}] 的歷史進度：`, expertProgress);
-            } catch(e) {
+                // 假設在 Supabase 建立了一個名為 'user_progress' 的 Table
+                // 欄位：name (text, Primary Key), progress (jsonb/array)
+                const { data, error } = await dbClient
+                    .from('user_progress')
+                    .select('progress')
+                    .eq('name', currentUser)
+                    .single();
+                
+                if (!error && data && data.progress) {
+                    expertProgress = data.progress;
+                    console.log(`☁️ 成功自雲端資料庫載入玩家 [${currentUser}] 的歷史進度：`, expertProgress);
+                    loaded = true;
+                }
+            } catch (err) {
+                console.warn("嘗試自雲端讀取進度時發生錯誤，轉向本地儲存：", err);
+            }
+        }
+
+        // 如果雲端沒有或失敗，退回 LocalStorage
+        if (!loaded) {
+            const savedData = localStorage.getItem(`korean_progress_${currentUser}`);
+            if (savedData) {
+                try {
+                    expertProgress = JSON.parse(savedData);
+                    console.log(`💾 成功自本地 LocalStorage 載入玩家 [${currentUser}] 的歷史進度：`, expertProgress);
+                } catch(e) {
+                    expertProgress = Array(20).fill(false);
+                }
+            } else {
                 expertProgress = Array(20).fill(false);
             }
-        } else {
-            expertProgress = Array(20).fill(false);
         }
     }
 
-    // 儲存當前進度
-    function saveProgress() {
+    // 儲存進度：同時寫入本地與雲端
+    async function saveProgress() {
         if (!currentUser) return;
+        
+        // 1. 先存本地
         localStorage.setItem(`korean_progress_${currentUser}`, JSON.stringify(expertProgress));
+
+        // 2. 即時同步至 Supabase 雲端
+        if (dbClient) {
+            try {
+                // 使用 upsert 做「存在就更新，不存在就新增」的處理
+                const { error } = await dbClient
+                    .from('user_progress')
+                    .upsert({ name: currentUser, progress: expertProgress }, { onConflict: 'name' });
+                
+                if (error) throw error;
+                console.log(`☁️ 雲端同步成功！已為 [${currentUser}] 保存進度。`);
+            } catch (err) {
+                console.error("☁️ 雲端備份失敗（可能 Table 未設定或權限不符）：", err);
+            }
+        }
     }
 
     // 登出
@@ -409,7 +454,7 @@
             keypad.appendChild(btn);
         }
         updateKeypadStatus();
-        updateSubmitButton(); // 同步更新下方送出按鈕的完成數 (x/20)
+        updateSubmitButton();
     }
 
     function updateKeypadStatus() {
@@ -458,7 +503,7 @@
         loadSentence(currentIdx);
     }
 
-    // 🔊 優質、流暢且標準的韓語女聲播放
+    // 🔊 播放標準女聲
     function speakStandard() {
         const text = encodeURIComponent(sentences[currentIdx]);
         const ttsUrl = `https://api.vveit.com/api/tts?voice=ko-KR-SunHiNeural&text=${text}`;
@@ -484,14 +529,11 @@
         recognition = new SpeechRecognition();
         recognition.lang = 'ko-KR';
         
-        // 【錄音精準度修正】:
-        // 1. 啟用 continuous，防止語氣稍有頓挫就被瀏覽器強制切斷
         recognition.continuous = true; 
         recognition.interimResults = false;
         recognition.maxAlternatives = 1;
 
         recognition.onresult = function(event) {
-            // 抓取最後一次辨識成功的完整語音結果
             const latestResultIdx = event.results.length - 1;
             const userSpeech = event.results[latestResultIdx][0].transcript.trim();
             compareSpeech(userSpeech);
@@ -530,14 +572,13 @@
             feedbackMsg.innerText = "🎙️ 系統預熱中，請稍候...";
             feedbackMsg.className = "feedback";
             
-            // 核心優化：開啟硬體錄音
             recognition.start();
             if (mediaRecorder && mediaRecorder.state === "inactive") {
                 audioChunks = [];
                 mediaRecorder.start();
             }
 
-            // 【防止開頭吃字修正】：延遲 250ms 提示再說話，確保麥克風已完全喚醒
+            // 延遲 250ms 提示說話（防吃字）
             startDelayTimeout = setTimeout(() => {
                 if (isRecording) {
                     feedbackMsg.innerText = "🎤 請開始大聲跟讀！";
@@ -545,10 +586,10 @@
             }, 250);
 
         } else {
-            // 【防止結尾吃字修正】：點擊停止後，刻意延遲 400ms 再真正關閉錄音，完整保留最後語音
             feedbackMsg.innerText = "⚙️ 正在彙整語音...";
             clearTimeout(startDelayTimeout);
             
+            // 點擊停止後，延遲 400ms 再關閉錄音（防結尾吃字）
             setTimeout(() => {
                 stopRecordingProcess();
             }, 400); 
@@ -567,7 +608,6 @@
     function compareSpeech(userText) {
         stopRecordingProcess();
         
-        // 韓文字元淨化比對
         const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；!,，。]/g, '');
         const cleanUser = userText.replace(/[\s\?\.；!,，。]/g, '');
         const feedbackMsg = document.getElementById('feedback-message');
@@ -578,7 +618,7 @@
             
             if (currentMode === 'expert') {
                 expertProgress[currentIdx] = true;
-                saveProgress(); // 即時存檔
+                saveProgress(); // 內部已整合雙軌同步（本地 + 雲端）
                 updateKeypadStatus();
                 updateSubmitButton();
             }
@@ -611,7 +651,7 @@
         list.push({ name: currentUser, time: finishTime });
         localStorage.setItem('korean_global_board', JSON.stringify(list));
 
-        // 2. 線上即時同步 (若串接了 Supabase)
+        // 2. 線上即時同步
         if (dbClient) {
             try {
                 const { error } = await dbClient
@@ -626,7 +666,7 @@
         alert(`恭喜 ${currentUser}！20句高手模式大滿貫通關！`);
         updateLeaderboardView();
 
-        // 重置
+        // 重置個人歷史挑戰進度
         expertProgress = Array(20).fill(false);
         saveProgress();
         updateKeypadStatus();
