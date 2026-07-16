@@ -504,59 +504,76 @@
         loadSentence(currentIdx);
     }
 
-    // 🔊 播放標準女聲（終極雙重相容版）
+// 🔊 播放標準女聲（Google MP3 終極極限相容版）
     function speakStandard() {
         const targetText = sentences[currentIdx];
         const textEncoded = encodeURIComponent(targetText);
-        const ttsUrl = `https://api.vveit.com/api/tts?voice=ko-KR-SunHiNeural&text=${textEncoded}`;
         
-        // 優先嘗試：使用剛才登入時「已被使用者手動授權解鎖」的全域音訊物件播放
+        // 使用 Google 翻譯的官方高品質 MP3 語音串流 (標準女性發音)
+        const googleTtsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ko&client=tw-ob&q=${textEncoded}`;
+        
+        console.log("正在嘗試播放 Google MP3 語音...");
+
+        // 1. 優先：使用已經在登入時「被使用者點擊解鎖」的全域播放器
         if (globalAudioPlayer) {
             try {
-                globalAudioPlayer.src = ttsUrl;
+                globalAudioPlayer.src = googleTtsUrl;
                 globalAudioPlayer.load();
                 
                 const playPromise = globalAudioPlayer.play();
                 if (playPromise !== undefined) {
                     playPromise.catch(err => {
-                        console.warn("全域解鎖播放器被阻擋，嘗試備用方案：", err);
-                        triggerFallbackTTS(targetText);
+                        console.warn("全域播放器播放實體 MP3 失敗，啟用備用獨立播放器：", err);
+                        fallbackWithNewAudio(googleTtsUrl, targetText);
                     });
                 }
             } catch(e) {
-                console.warn("全域播放器拋出錯誤，嘗試備用方案：", e);
-                triggerFallbackTTS(targetText);
+                console.warn("全域播放器報錯，啟用備用獨立播放器：", e);
+                fallbackWithNewAudio(googleTtsUrl, targetText);
             }
         } else {
-            triggerFallbackTTS(targetText);
+            fallbackWithNewAudio(googleTtsUrl, targetText);
         }
     }
 
-    // 備用方案：使用行動裝置本機的原生系統 TTS (不依賴網路，絕對保證有聲音)
+    // 備用方案一：建立全新的 Audio 物件直接播放實體 MP3
+    function fallbackWithNewAudio(mp3Url, rawText) {
+        try {
+            const tempAudio = new Audio(mp3Url);
+            const playPromise = tempAudio.play();
+            
+            if (playPromise !== undefined) {
+                playPromise.catch(err => {
+                    console.warn("實體 MP3 播放也被手機完全封鎖，啟用終極 Web Speech TTS：", err);
+                    triggerFallbackTTS(rawText);
+                });
+            }
+        } catch (e) {
+            triggerFallbackTTS(rawText);
+        }
+    }
+
+    // 備用方案二：手機本機系統原生 TTS 語音引擎
     function triggerFallbackTTS(text) {
         console.log("啟動手機原生 Web Speech 語音合成...");
         try {
-            // 先強制取消正在排隊播放的所有聲音，防止手機語音卡死
             window.speechSynthesis.cancel(); 
 
             const utterance = new SpeechSynthesisUtterance(text);
             utterance.lang = 'ko-KR';
             
-            // 嘗試撈取手機內的優質韓語發音人
             const voices = window.speechSynthesis.getVoices();
-            const koreanVoice = voices.find(v => v.lang.startsWith('ko') && (v.name.includes('female') || v.name.includes('SunHi') || v.name.includes('Google') || v.name.includes('Apple')));
+            const koreanVoice = voices.find(v => v.lang.startsWith('ko'));
             if (koreanVoice) {
                 utterance.voice = koreanVoice;
             }
             
-            // 調整發音速度，讓發音更自然
-            utterance.rate = 0.95; 
+            utterance.rate = 0.9; 
             window.speechSynthesis.speak(utterance);
         } catch(e) {
-            alert("很抱歉，您的手機系統完全封鎖了語音播放與合成功能。請更換其他瀏覽器 (如 Chrome) 試試看！");
+            alert("您的手機瀏覽器安全設定極高，已完全封鎖音訊。請嘗試使用 Line 以外的瀏覽器 (例如手機版 Chrome 或 Safari 點擊右上角『在瀏覽器開啟』)！");
         }
     }
-
     function initSpeechRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
