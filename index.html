@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>韓語聽力跟讀挑戰系統</title>
-<!-- 引入 Supabase 最新版 CDN -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.43.4/dist/umd/supabase.js"></script>
+    <!-- 🟢 引入 Supabase 最新版相容 CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.43.4/dist/umd/supabase.js"></script>
     <style>
         :root {
             --primary: #6366F1;
@@ -313,19 +313,18 @@
 
 <script>
     // ==========================================
-    // ⚠️ SUPABASE 雲端資料庫設定區
+    // ⚠️ SUPABASE 雲端資料庫設定區 (請在此處貼上正確的值)
     // ==========================================
-    const SUPABASE_URL = "https://qiffkfhwakmtxfljiyzz.supabase.co"; 
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFpZmZrZmh3YWttdHhmbGppeXp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxODQ0NzIsImV4cCI6MjA5OTc2MDQ3Mn0.iUh5bZufh__Gxnn6zjz0XNEl9V7802Ho97d8IB66k74";
+    const SUPABASE_URL = "https://qiffkfhwakmtxfljiyzz.supabase.co"; // ⬅️ 已自動幫您拿掉 /rest/v1/ 尾巴
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFpZmZrZmh3YWttdHhmbGppeXp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxODQ0NzIsImV4cCI6MjA5OTc2MDQ3Mn0.iUh5bZufh__Gxnn6zjz0XNEl9V7802Ho97d8IB66k74";             // ⬅️ 請填入您的 anon public 金鑰！
     let dbClient = null; 
 
- function initSupabase() {
-        if (SUPABASE_URL.includes("YOUR_SUPABASE_PROJECT_URL") || SUPABASE_URL === "") {
-            console.warn("⚠️ 偵測到尚未修改 Supabase URL 設定！");
+    function initSupabase() {
+        if (SUPABASE_URL === "" || SUPABASE_ANON_KEY === "YOUR_SUPABASE_ANON_KEY") {
+            console.warn("⚠️ 偵測到尚未修改 Supabase 金鑰設定！");
             return;
         }
         
-        // 確保 CDN 已經安全載入
         if (typeof supabase !== 'undefined' && supabase.createClient) {
             try {
                 dbClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -335,19 +334,19 @@
             }
         } else {
             console.warn("⚠️ 偵測到 Supabase SDK 尚未完全載入，0.5秒後重試...");
-            setTimeout(initSupabase, 500); // 0.5 秒後自我修正重試
+            setTimeout(initSupabase, 500); 
         }
     }
 
-    // 啟動自我檢查連線
+    // 啟動連線檢查
     initSupabase();
 
     const sentences = [
         "이름은 뭐예요?", "어느 나라 사람이에요?", "어디에서 왔어요?", "직업은 뭐예요?",
         "지수는 경찰이에요.", "지수는 태국 사람이에요.", "마크는 의사예요.", "마크는 호주 사람이에요.",
-        "영敏은 매니저예요.", "영민은 중국 사람이에요.", "리쿠는 사장님이에요.", "리쿠는 일본 사람이에요.",
+        "영민은 매니저예요.", "영민은 중국 사람이에요.", "리쿠는 사장님이에요.", "리쿠는 일본 사람이에요.",
         "아트는 간호사예요.", "아트는 캐나다 사람이에요.", "서리는 비서예요.", "서리는 필리핀 사람이에요.",
-        "민수는 변호사예요.", "민수는 베트남 사람이에요.", "아담은 공무원이에요.", "아담은 독일 사람이에요."
+        "민수는 변호사예요.", "민수는 베트남 사람이에요.", "아дам은 공무원이에요.", "아дам은 독일 사람이에요."
     ];
 
     let currentUser = "";
@@ -360,8 +359,6 @@
     let mediaRecorder;
     let audioChunks = [];
     let audioUrl = null;
-
-    // 用來給行動裝置預先解鎖的音訊物件
     let globalAudioPlayer = null;
 
     // 登入與進度回復
@@ -376,10 +373,9 @@
         document.getElementById('login-overlay').style.display = 'none';
         document.getElementById('main-container').style.display = 'block';
         
-        // 【手機音訊強制解鎖】：在使用者點擊「進入挑戰」這個真實觸發事件中，立刻開通音訊特權
+        // 手機音訊通道預先手動解鎖
         try {
             globalAudioPlayer = new Audio();
-            // 播放一小段極短的無聲 Base64 音訊，藉此騙過 iOS / Safari 的鎖定
             globalAudioPlayer.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
             globalAudioPlayer.play().then(() => {
                 console.log("📱 行動裝置音訊通道已成功手動解鎖！");
@@ -388,7 +384,17 @@
             console.error("無法建立全域解鎖播放器", e);
         }
 
-   // 載入進度邏輯（相容性修正版）
+        // 載入進度
+        await loadSavedProgress();
+        
+        // 初始化 UI
+        initKeypad();
+        loadSentence(0);
+        initSpeechRecognition();
+        updateLeaderboardView();
+    }
+
+    // 載入進度邏輯 (最新相容 JSONB 格式版)
     async function loadSavedProgress() {
         let loaded = false;
         if (dbClient) {
@@ -396,10 +402,9 @@
                 const { data, error } = await dbClient
                     .from('user_progress')
                     .select('progress')
-                    .eq('name', currentUser); // 移除 .single() 避免因資料不存在直接報錯
+                    .eq('name', currentUser);
                 
                 if (!error && data && data.length > 0 && data[0].progress) {
-                    // 確保讀出來的是陣列格式
                     const rawProgress = data[0].progress;
                     expertProgress = Array.isArray(rawProgress) ? rawProgress : JSON.parse(rawProgress);
                     loaded = true;
@@ -415,7 +420,6 @@
             if (savedData) {
                 try {
                     expertProgress = JSON.parse(savedData);
-                    console.log("🟡 已從本地儲存載入進度");
                 } catch(e) {
                     expertProgress = Array(20).fill(false);
                 }
@@ -425,14 +429,13 @@
         }
     }
 
-    // 儲存進度（相容性修正版）
+    // 儲存進度 (最新相容 JSONB 格式版)
     async function saveProgress() {
         if (!currentUser) return;
         localStorage.setItem(`korean_progress_${currentUser}`, JSON.stringify(expertProgress));
 
         if (dbClient) {
             try {
-                // 強制將陣列轉為標準 JSON 格式再寫入，防止 406 錯誤
                 const { error } = await dbClient
                     .from('user_progress')
                     .upsert(
@@ -522,7 +525,7 @@
         loadSentence(currentIdx);
     }
 
-// 🔊 播放標準女聲（強制女聲發音版）
+    // 🔊 播放標準女聲 (整合 100% 電腦與手機原生優質女聲發音)
     function speakStandard() {
         const targetText = sentences[currentIdx];
         console.log("正在播放標準韓文女聲：" + targetText);
@@ -534,23 +537,21 @@
             utterance.lang = 'ko-KR'; 
             utterance.rate = 0.85; 
 
-            // 取得當前裝置上所有的發音人
             const voices = window.speechSynthesis.getVoices();
             
-            // 【關鍵修改】：不分模式，一律強制過濾並選取最溫柔自然的韓語「女聲」
+            // 強制過濾並選取最溫柔自然的韓語「女聲」發音人
             const femaleKoreanVoice = voices.find(v => v.lang.startsWith('ko') && 
                 (v.name.toLowerCase().includes('female') || 
                  v.name.toLowerCase().includes('sunhi') || 
                  v.name.toLowerCase().includes('google') || 
                  v.name.toLowerCase().includes('siri') ||
                  v.name.toLowerCase().includes('yuna') ||
-                 v.name.toLowerCase().includes('hj'))); // 涵蓋大部分 Apple, Google, 微软 女聲代號
+                 v.name.toLowerCase().includes('hj'))); 
             
             if (femaleKoreanVoice) {
                 utterance.voice = femaleKoreanVoice;
-                console.log("成功套用標準女聲發音人: " + femaleKoreanVoice.name);
+                console.log("成功套用標準女聲: " + femaleKoreanVoice.name);
             } else {
-                // 如果找不到女聲，才套用第一個找到的韓語發音（通常是系統預設）
                 const defaultKo = voices.find(v => v.lang.startsWith('ko'));
                 if (defaultKo) utterance.voice = defaultKo;
             }
@@ -561,6 +562,8 @@
             console.error("語音播放失敗：", e);
         }
     }
+
+    // 🎤 麥克風辨識主引擎 (保留)
     function initSpeechRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
@@ -669,7 +672,6 @@
 
     function playMyVoice() {
         if (audioUrl) {
-            // 回放錄音也透過同一個經授權的播放器播放，確保手機聽得到
             if (globalAudioPlayer) {
                 globalAudioPlayer.src = audioUrl;
                 globalAudioPlayer.play();
@@ -691,12 +693,10 @@
     async function submitToLeaderboard() {
         const finishTime = new Date().toLocaleString('zh-TW', { hour12: false });
         
-        // 1. 本地排行榜儲存
         let list = JSON.parse(localStorage.getItem('korean_global_board')) || [];
         list.push({ name: currentUser, time: finishTime });
         localStorage.setItem('korean_global_board', JSON.stringify(list));
 
-        // 2. 線上即時同步
         if (dbClient) {
             try {
                 const { error } = await dbClient
@@ -711,7 +711,6 @@
         alert(`恭喜 ${currentUser}！20句高手模式大滿貫通關！`);
         updateLeaderboardView();
 
-        // 重置
         expertProgress = Array(20).fill(false);
         saveProgress();
         updateKeypadStatus();
