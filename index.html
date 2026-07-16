@@ -388,17 +388,7 @@
             console.error("無法建立全域解鎖播放器", e);
         }
 
-        // 載入進度
-        await loadSavedProgress();
-        
-        // 初始化 UI
-        initKeypad();
-        loadSentence(0);
-        initSpeechRecognition();
-        updateLeaderboardView();
-    }
-
-    // 載入進度邏輯
+   // 載入進度邏輯（相容性修正版）
     async function loadSavedProgress() {
         let loaded = false;
         if (dbClient) {
@@ -406,12 +396,14 @@
                 const { data, error } = await dbClient
                     .from('user_progress')
                     .select('progress')
-                    .eq('name', currentUser)
-                    .single();
+                    .eq('name', currentUser); // 移除 .single() 避免因資料不存在直接報錯
                 
-                if (!error && data && data.progress) {
-                    expertProgress = data.progress;
+                if (!error && data && data.length > 0 && data[0].progress) {
+                    // 確保讀出來的是陣列格式
+                    const rawProgress = data[0].progress;
+                    expertProgress = Array.isArray(rawProgress) ? rawProgress : JSON.parse(rawProgress);
                     loaded = true;
+                    console.log("🟢 成功自 Supabase 雲端載入進度：", expertProgress);
                 }
             } catch (err) {
                 console.warn("自雲端讀取進度時發生錯誤，轉向本地儲存：", err);
@@ -423,6 +415,7 @@
             if (savedData) {
                 try {
                     expertProgress = JSON.parse(savedData);
+                    console.log("🟡 已從本地儲存載入進度");
                 } catch(e) {
                     expertProgress = Array(20).fill(false);
                 }
@@ -432,18 +425,28 @@
         }
     }
 
-    // 儲存進度
+    // 儲存進度（相容性修正版）
     async function saveProgress() {
         if (!currentUser) return;
         localStorage.setItem(`korean_progress_${currentUser}`, JSON.stringify(expertProgress));
 
         if (dbClient) {
             try {
-                await dbClient
+                // 強制將陣列轉為標準 JSON 格式再寫入，防止 406 錯誤
+                const { error } = await dbClient
                     .from('user_progress')
-                    .upsert({ name: currentUser, progress: expertProgress }, { onConflict: 'name' });
+                    .upsert(
+                        { name: currentUser, progress: expertProgress }, 
+                        { onConflict: 'name' }
+                    );
+                
+                if (error) {
+                    console.error("🔴 雲端儲存失敗原因：", error.message);
+                } else {
+                    console.log("🟢 進度已成功同步備份至 Supabase 雲端！");
+                }
             } catch (err) {
-                console.error("雲端備份失敗：", err);
+                console.error("雲端備份時發生非預期錯誤：", err);
             }
         }
     }
