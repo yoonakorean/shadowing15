@@ -243,6 +243,9 @@
 </head>
 <body>
 
+<!-- 隱藏的 HTML5 原生音訊播放元件，用於穩定儲存 Blob URL -->
+<audio id="audioPlayback" style="display:none;"></audio>
+
 <!-- 登入遮罩 -->
 <div class="login-overlay" id="login-overlay">
     <div class="login-box">
@@ -353,25 +356,47 @@
     let currentMode = 'practice';
     let expertProgress = Array(20).fill(false);
 
-    let recognition;
-    let isRecording = false;
-    let mediaRecorder;
-    let globalStream = null; // 全域共享音訊串流
+    // 🎙️ 錄音與辨識核心狀態變數
+    let mediaRecorder = null;
     let audioChunks = [];
-    let audioUrl = null;
-    let globalAudioPlayer = null;
+    let recognition = null;
+    let isRecording = false;
+    let currentStream = null;
 
-    let micSleepTimeout = null;
-    const MIC_SLEEP_DURATION = 300000; 
+    const audioPlayback = document.getElementById('audioPlayback');
 
-    function resetMicSleepTimer() {
-        if (micSleepTimeout) clearTimeout(micSleepTimeout);
-        micSleepTimeout = setTimeout(() => {
-            if (!isRecording) {
-                console.log("⏱️ 網頁閒置已達5分鐘，關閉麥克風防護啟用。");
-                try { if (recognition) recognition.stop(); } catch(e){}
-            }
-        }, MIC_SLEEP_DURATION);
+    // 🚀 初始化 Web Speech API (語音辨識元件)
+    function initSpeechEngine() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.lang = 'ko-KR'; 
+            recognition.continuous = false; // 唸完句子後自動判定結束
+            recognition.interimResults = false; 
+
+            recognition.onresult = (event) => {
+                const studentSpeech = event.results[0][0].transcript.replace(/\s+/g, ""); // 去除空白
+                compareSpeech(studentSpeech, event.results[0][0].transcript);
+            };
+
+            recognition.onerror = (event) => {
+                console.error("辨識引擎錯誤:", event.error);
+                if (event.error === 'no-speech') {
+                    const feedbackMsg = document.getElementById('feedback-message');
+                    feedbackMsg.innerText = "❌ 沒有聽到聲音，請大聲一點再試一次";
+                    feedbackMsg.className = "feedback text-danger";
+                }
+            };
+
+            // 當辨識因為講完話自動斷掉或結束時，連動中斷錄音器封裝
+            recognition.onend = () => {
+                if (isRecording) {
+                    stopRecordingProcess();
+                }
+            };
+        } else {
+            alert("您的瀏覽器不支援 Web Speech API。建議使用 Chrome 瀏覽器！");
+        }
     }
 
     // 登入與進度回復
@@ -386,21 +411,11 @@
         document.getElementById('login-overlay').style.display = 'none';
         document.getElementById('main-container').style.display = 'block';
         
-        try {
-            globalAudioPlayer = new Audio();
-            globalAudioPlayer.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
-            globalAudioPlayer.play().then(() => {
-                console.log("📱 行動裝置音訊通道已成功手動解鎖！");
-            }).catch(e => console.warn("音訊通道解鎖受阻：", e));
-        } catch(e) {
-            console.error("無法建立全域解鎖播放器", e);
-        }
-
+        initSpeechEngine(); // 初始化辨識引擎
         await loadSavedProgress();
         initKeypad();
         loadSentence(0);
-        await initAudioAndSpeech(); // 🚀 關鍵調整：同時請求硬體並綁定
-        updateLeaderboardView();
+        await updateLeaderboardView();
     }
 
     async function loadSavedProgress() {
@@ -467,9 +482,9 @@
         document.getElementById('main-container').style.display = 'none';
         document.getElementById('username-input').value = "";
         expertProgress = Array(20).fill(false);
-        if (globalStream) {
-            globalStream.getTracks().forEach(track => track.stop());
-            globalStream = null;
+        if (currentStream) {
+            currentStream.getTracks().forEach(track => track.stop());
+            currentStream = null;
         }
     }
 
@@ -515,7 +530,7 @@
         }
 
         document.getElementById('playback-btn').disabled = true;
-        audioUrl = null;
+        audioPlayback.src = "";
         document.getElementById('feedback-message').innerText = "準備好後，點擊「開始錄音」";
         document.getElementById('feedback-message').className = "feedback";
         updateKeypadStatus();
@@ -536,13 +551,9 @@
 
     // 🔊 播放標準女聲
     function speakStandard() {
-        if (isRecording) {
-            console.warn("目前正在錄音");
-            return; 
-        }
+        if (isRecording) return; 
 
         const targetText = sentences[currentIdx];
-        
         try {
             window.speechSynthesis.cancel(); 
 
@@ -565,140 +576,81 @@
                 const defaultKo = voices.find(v => v.lang.startsWith('ko'));
                 if (defaultKo) utterance.voice = defaultKo;
             }
-            
             window.speechSynthesis.speak(utterance);
-
         } catch(e) {
             console.error("語音播放失敗：", e);
         }
     }
 
-    // 🧠 整合音訊流與語音辨識主引擎 (音訊共享架構)
-    async function initAudioAndSpeech() {
-        // 1. 初始化 Web Speech API
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-            alert("瀏覽器不支援 Web Speech API。建議使用 Chrome 瀏覽器！");
-            return;
-        }
-        recognition = new SpeechRecognition();
-        recognition.lang = 'ko-KR';
-        recognition.continuous = false; // 🟢 改為 false 可大幅提高單句辨識彙整速度
-        recognition.interimResults = false;
-        recognition.maxAlternatives = 1;
-
-        recognition.onresult = function(event) {
-            const userSpeech = event.results[0][0].transcript.trim();
-            compareSpeech(userSpeech);
-        };
-
-        recognition.onerror = function(e) {
-            console.error("辨識引擎錯誤:", e);
-            if (isRecording) {
-                document.getElementById('feedback-message').innerText = "⚠️ 辨識失敗或無聲音，請重新錄音。";
-                document.getElementById('feedback-message').className = "feedback text-danger";
-                stopRecordingProcess();
-            }
-        };
-
-        recognition.onend = function() {
-            // 當辨識自然結束且仍在錄音狀態，主動切斷
-            if (isRecording) {
-                stopRecordingProcess();
-            }
-        };
-
-        // 2. 取得唯一的全域麥克風權限串流
-        try {
-            globalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            
-            // 偵測目前瀏覽器支援的音訊編碼，確保回放相容性
-            let options = { mimeType: 'audio/webm' };
-            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                options = { mimeType: 'audio/ogg;codecs=opus' };
-            }
-            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                options = {}; // 讓瀏覽器用預設
-            }
-
-            mediaRecorder = new MediaRecorder(globalStream, options);
-            
-            mediaRecorder.ondataavailable = event => {
-                if (event.data && event.data.size > 0) {
-                    audioChunks.push(event.data);
-                }
-            };
-            
-            mediaRecorder.onstop = () => {
-                const mimeType = mediaRecorder.mimeType || 'audio/wav';
-                const audioBlob = new Blob(audioChunks, { type: mimeType });
-                audioUrl = URL.createObjectURL(audioBlob);
-                document.getElementById('playback-btn').disabled = false;
-                console.log("🟢 錄音快取包封裝完成，類型: " + mimeType);
-            };
-
-        } catch (err) {
-            console.error("無法取得錄音裝置權限：", err);
-            alert("無法開啟麥克風，請確保已允許網頁存取您的麥克風權限。");
-        }
-
-        resetMicSleepTimer(); 
-    }
-
-   // 🎤 控制錄音的開關
-    let startDelayTimeout;
-    function toggleRecord() {
-        if (!recognition || !globalStream) {
-            alert("錄音系統未就緒，請重新登入或重新整理頁面。");
+    // 🎤 整合「即時辨識與回放」的錄音與音訊硬體控制開關
+    async function toggleRecord() {
+        if (!recognition) {
+            alert("語音辨識系統未就緒，請重新整理頁面。");
             return;
         }
         const recordBtn = document.getElementById('record-btn');
+        const playbackBtn = document.getElementById('playback-btn');
         const feedbackMsg = document.getElementById('feedback-message');
 
-        resetMicSleepTimer(); 
-
         if (!isRecording) {
-            isRecording = true;
-            audioChunks = []; // 清空上一次的快取
-            document.getElementById('playback-btn').disabled = true;
-
-            recordBtn.innerText = "🛑 停止錄音中...";
-            recordBtn.classList.add('recording');
-            feedbackMsg.innerText = "🎙️ 系統預熱中，請稍候...";
-            feedbackMsg.className = "feedback";
-            
+            // 1. 開啟麥克風並【套用原汁原味設定（關閉自動音量調整、降噪與回音消除）】，確保音質無損與回放成功率
             try {
-                // 每次啟動前，確保舊的完全清空
-                window.speechSynthesis.cancel(); 
+                currentStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        autoGainControl: false,  // 關鍵：關閉自動增益
+                        echoCancellation: false, // 關鍵：關閉回音消除
+                        noiseSuppression: false  // 關鍵：關閉降噪
+                    }
+                });
+
+                audioChunks = [];
+                mediaRecorder = new MediaRecorder(currentStream);
                 
-                if (mediaRecorder && mediaRecorder.state === "inactive") {
-                    mediaRecorder.start(10); 
-                }
-                
-                // 啟動辨識
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) audioChunks.push(event.data);
+                };
+
+                // 2. 錄音結束處理（產生原生相容的 Blob 並無縫對接 HTML5 隱藏播放器）
+                mediaRecorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    audioPlayback.src = audioUrl; // 把檔案傳遞給播放器儲存
+                    playbackBtn.disabled = false;  // 點亮回放按鈕
+                    
+                    // 確實釋放與切斷本次錄音的麥克風硬體軌道，防止佔用卡死
+                    if (currentStream) {
+                        currentStream.getTracks().forEach(track => track.stop());
+                        currentStream = null;
+                    }
+                };
+
+                // 3. 同步啟動錄音與辨識
+                isRecording = true;
+                mediaRecorder.start();
                 recognition.start();
-            } catch (e) {
-                console.warn("啟動時有舊殘留，嘗試強制重啟:", e);
-                // 如果因為上次沒關乾淨導致報錯，強迫中止再開一次
-                try { recognition.abort(); recognition.start(); } catch(err){}
+
+                recordBtn.innerText = "🛑 停止錄音 (或唸完自動停止)";
+                recordBtn.classList.add('recording');
+                feedbackMsg.innerText = "🎤 正在錄音與辨識中，請開始跟讀...";
+                feedbackMsg.className = "feedback";
+                playbackBtn.disabled = true;
+
+            } catch (err) {
+                console.error("麥克風存取失敗:", err);
+                feedbackMsg.innerText = "⚠️ 麥克風權限被拒絕或錄音裝置異常";
+                feedbackMsg.className = "feedback text-danger";
+                isRecording = false;
             }
-
-            startDelayTimeout = setTimeout(() => {
-                if (isRecording) {
-                    feedbackMsg.innerText = "🎤 請開始大聲跟讀！";
-                }
-            }, 150);
-
         } else {
+            // 手動點擊停止
             feedbackMsg.innerText = "⚙️ 正在彙整語音...";
-            clearTimeout(startDelayTimeout);
             stopRecordingProcess();
         }
     }
 
-  // 🛑 停止錄音（強制序列同步版）
-    async function stopRecordingProcess() {
-        if (!isRecording) return;
+    // 🛑 停止錄音與辨識進程（防止重複呼叫與卡住死鎖）
+    function stopRecordingProcess() {
+        if (!isRecording) return; // 安全鎖：避免重複觸發
         isRecording = false;
 
         const recordBtn = document.getElementById('record-btn');
@@ -707,39 +659,31 @@
             recordBtn.classList.remove('recording');
         }
 
-        // 1. 先用最高權限中斷辨識器，並強制等待一小段時間讓瀏覽器釋放硬體
-        try { 
-            recognition.abort(); 
-            console.log("🟢 辨識引擎已發出中斷訊號");
-        } catch(e){
-            console.warn("停止辨識器異常:", e);
+        // 停止錄音器
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            try { mediaRecorder.stop(); } catch(e) { console.error(e); }
         }
-
-        // 延遲 200 毫秒，給瀏覽器喘息時間，錯開硬體競爭
-        await new Promise(resolve => setTimeout(resolve, 200));
-
-        // 2. 這時候錄音機再收尾，確保拿到的音訊軌道是乾淨且沒有被辨識引擎干擾的
-        try { 
-            if (mediaRecorder && mediaRecorder.state !== "inactive") {
-                mediaRecorder.stop(); 
-                console.log("🟢 錄音硬體已成功停止並封裝");
-            } else {
-                document.getElementById('feedback-message').innerText = "⚠️ 錄音異常中斷，請再試一次。";
+        
+        // 停止辨識器
+        if (recognition) {
+            try {
+                recognition.stop();
+            } catch (e) {
+                // 捕捉辨識已經自然結束時重複呼叫的異常，優雅跳過
+                console.log("辨識器早已自然關閉");
             }
-        } catch(e){
-            console.error("停止錄音器嚴重異常:", e);
-            document.getElementById('feedback-message').innerText = "⚠️ 彙整出現技術錯誤。";
         }
     }
 
-    // 📝 語音比對與結果判決
-    function compareSpeech(userText) {
+    // 📝 完美的語音比對與判決邏輯
+    function compareSpeech(studentSpeechClean, rawTranscript) {
         const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；!,，。]/g, '');
-        const cleanUser = userText.replace(/[\s\?\.；!,，。]/g, '');
         const feedbackMsg = document.getElementById('feedback-message');
 
-        if (cleanTarget === cleanUser) {
-            feedbackMsg.innerText = `🎉 合格！辨識結果："${userText}"`;
+        feedbackMsg.innerHTML = `系統聽到：<b>${rawTranscript}</b>`;
+
+        if (studentSpeechClean === cleanTarget) {
+            feedbackMsg.innerText = `🎉 發音正確！過關！(辨識結果: "${rawTranscript}")`;
             feedbackMsg.className = "feedback text-success";
             
             if (currentMode === 'expert') {
@@ -749,33 +693,22 @@
                 updateSubmitButton();
             }
         } else {
-            feedbackMsg.innerText = `❌ 不合格。您唸的是："${userText}"`;
+            feedbackMsg.innerText = `❌ 發音似乎不太對，再試一次！(系統聽到: "${rawTranscript}")`;
             feedbackMsg.className = "feedback text-danger";
         }
     }
 
     // 🎧 回放我的聲音
     function playMyVoice() {
-        if (audioUrl) {
+        if (audioPlayback.src) {
             try {
-                if (globalAudioPlayer) {
-                    globalAudioPlayer.src = audioUrl;
-                    globalAudioPlayer.play().catch(e => {
-                        console.error("全域回放失敗：", e);
-                        // 備用方案
-                        const fallbackAudio = new Audio(audioUrl);
-                        fallbackAudio.play();
-                    });
-                } else {
-                    const audio = new Audio(audioUrl);
-                    audio.play();
-                }
+                audioPlayback.play();
             } catch (err) {
-                alert("播放遭遇瀏覽器安全阻擋，請再試著按一次！");
+                alert("播放被瀏覽器阻擋，請再按一次！");
                 console.error(err);
             }
         } else {
-            alert("目前還沒有錄音檔案，或者彙整尚未完成喔！");
+            alert("目前還沒有可用的錄音檔喔！");
         }
     }
     
@@ -805,7 +738,7 @@
         }
 
         alert(`恭喜 ${currentUser}！20句高手模式大滿貫通關！`);
-        updateLeaderboardView();
+        await updateLeaderboardView();
 
         expertProgress = Array(20).fill(false);
         saveProgress();
@@ -816,6 +749,7 @@
 
     async function updateLeaderboardView() {
         const tbody = document.getElementById('leaderboard-body');
+        if (!tbody) return;
         tbody.innerHTML = '';
 
         let list = [];
