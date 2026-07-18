@@ -610,33 +610,32 @@
     }
 
     let startDelayTimeout;
-   // 🎤 控制錄音的開關 (手動按完成、不跟語音辨識衝突、音量飽滿版)
+// 🎤 控制錄音的開關 (先錄音、後判定、完美音量相容版)
     async function toggleRecord() {
         const recordBtn = document.getElementById('record-btn');
         const playbackBtn = document.getElementById('playback-btn');
         const feedbackMsg = document.getElementById('feedback-message');
 
         if (!isRecording) {
-            // 【開始錄音狀態】
+            // 【階段一：純錄音開始】
             isRecording = true;
             audioChunks = []; // 清空之前的錄音
             
             recordBtn.innerText = "⏹️ 說完了，點我完成";
             recordBtn.classList.add('recording');
-            feedbackMsg.innerText = "🎤 請開始大聲跟讀，講完請再點擊一次按鈕！";
+            feedbackMsg.innerText = "🎤 請開始大聲跟讀...";
             feedbackMsg.className = "feedback";
 
             if (playbackBtn) {
-                playbackBtn.disabled = true; // 錄音時先不能點回放
+                playbackBtn.disabled = true; // 判定成功前，先把回放鎖住
             }
 
             try {
-                // 強制關閉任何可能卡住的手機語音辨識，避免搶麥克風
+                // 錄音期間，絕對不准語音辨識啟動，徹底避免硬體衝突
                 if (recognition) {
                     try { recognition.abort(); } catch(e){}
                 }
 
-                // 請求麥克風並開始錄音
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(stream);
                 
@@ -647,22 +646,29 @@
                 };
 
                 mediaRecorder.onstop = () => {
-                    // 當錄音停止，立刻把片段打包成音檔
+                    // 錄音機停止，立刻打包音檔
                     const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
                     audioUrl = URL.createObjectURL(audioBlob);
                     
-                    // 音檔好了，按鈕「立刻」亮起，完全不用等！
-                    if (playbackBtn) {
-                        playbackBtn.disabled = false;
-                    }
-                    feedbackMsg.innerText = "🟢 錄音已安全存入手機！您可以點擊回放或繼續挑戰。";
-                    
-                    // 關鍵：關閉麥克風硬體軌道，完全放開麥克風，這樣等一下標準播音才不會被壓低聲音
+                    // 釋放麥克風軌道，完全放開喇叭硬體，音量就不會變小了
                     stream.getTracks().forEach(track => track.stop());
+
+                    // 【階段二：錄音結束，這時候才啟動語音辨識引擎來聽音比對】
+                    feedbackMsg.innerText = "⚙️ 語音判別中...";
+                    feedbackMsg.className = "feedback";
+
+                    if (recognition) {
+                        try {
+                            recognition.start(); // 這裡才啟動辨識
+                            console.log("錄音結束，啟動語音比對辨識...");
+                        } catch(e) {
+                            // 如果辨識引擎卡住，直接退回比對
+                            console.error("辨識引擎啟動失敗，請重新錄音");
+                        }
+                    }
                 };
 
                 mediaRecorder.start();
-                console.log("純錄音模式成功啟動！已與辨識引擎隔離。");
 
             } catch (err) {
                 console.error("無法開啟麥克風：", err);
@@ -673,30 +679,60 @@
             }
 
         } else {
-            // 【手動點擊完成狀態】
+            // 【使用者手動按完成】
             isRecording = false;
             recordBtn.innerText = "🎤 開始錄音";
             recordBtn.classList.remove('recording');
-            feedbackMsg.innerText = "⚙️ 正在打包您的聲音檔案...";
 
             if (mediaRecorder && mediaRecorder.state === "recording") {
                 try {
-                    mediaRecorder.stop(); // 這會自動觸發上面的 onstop
+                    mediaRecorder.stop(); // 觸發上面的 onstop，進入辨識階段
                 } catch(e) {
-                    console.error("停止錄音機時發生錯誤：", e);
+                    console.error(e);
                 }
             }
         }
     }
 
-    // 🛑 這個函數現在變得很簡單，單純用來給系統防錯
+    // 🛑 停止錄音輔助
     function stopRecordingProcess() {
         if (isRecording) {
-            toggleRecord(); // 如果正在錄音，直接呼叫切換來關閉
+            toggleRecord();
         }
     }
 
-    // 🎧 回放我的聲音 (修正為直接播放新生成的 audioUrl)
+    // 📝 語音比對與結果判決
+    function compareSpeech(userText) {
+        // 辨識到聲音了，立刻把語音辨識關閉，不佔用資源
+        try { if (recognition) recognition.stop(); } catch(e){}
+        
+        const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；!,，。]/g, '');
+        const cleanUser = userText.replace(/[\s\?\.；!,，。]/g, '');
+        const feedbackMsg = document.getElementById('feedback-message');
+        const playbackBtn = document.getElementById('playback-btn');
+
+        if (cleanTarget === cleanUser) {
+            feedbackMsg.innerText = `🎉 合格！辨識結果："${userText}"`;
+            feedbackMsg.className = "feedback text-success";
+            
+            if (currentMode === 'expert') {
+                expertProgress[currentIdx] = true;
+                saveProgress();
+                updateKeypadStatus();
+                updateSubmitButton();
+            }
+        } else {
+            feedbackMsg.innerText = `❌ 不合格。您唸的是："${userText}" (請再試一次)`;
+            feedbackMsg.className = "feedback text-danger";
+        }
+
+        // 【核心修正】只有當正確或錯誤跳出來之後，回放按鈕才會亮起！
+        if (playbackBtn) {
+            playbackBtn.disabled = false;
+        }
+    }
+
+    // 🎧 回放我的聲音
     function playMyVoice() {
         if (audioUrl) {
             if (globalAudioPlayer) {
@@ -710,6 +746,7 @@
             alert("目前還沒有錄音檔案喔！");
         }
     }
+    
     function updateSubmitButton() {
         const passedCount = expertProgress.filter(Boolean).length;
         const submitBtn = document.getElementById('submit-btn');
