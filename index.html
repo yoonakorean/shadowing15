@@ -361,6 +361,10 @@
     let audioUrl = null;
     let globalAudioPlayer = null;
 
+    // ⏱️ 麥克風自動休眠定時器
+    let micSleepTimeout = null;
+    const MIC_SLEEP_DURATION = 300000; // 設定時間：5分鐘 (300,000 毫秒)
+
     // 登入與進度回復
     async function loginUser() {
         const input = document.getElementById('username-input').value.trim();
@@ -525,28 +529,27 @@
         loadSentence(currentIdx);
     }
 
-   // 🔊 播放標準女聲 (音量修正版)
+// 🔊 播放標準女聲（只增加：錄音時不能播放功能）
     function speakStandard() {
+        // ⚠️ 【新增保險限制】：如果目前正在錄音，直接攔截，不准播放聲音！
+        if (isRecording) {
+            console.warn("目前正在錄音中，禁止播放標準語音，以防音訊衝突。");
+            return; 
+        }
+
         const targetText = sentences[currentIdx];
         console.log("正在播放標準韓文女聲：" + targetText);
         
         try {
-            // 【修正】播音前，如果正在錄音或辨識，強制關閉它，釋放音訊通道
-            if (isRecording) {
-                stopRecordingProcess();
-            }
-            if (recognition) {
-                try { recognition.stop(); } catch(e){}
-            }
-
             window.speechSynthesis.cancel(); 
 
             const utterance = new SpeechSynthesisUtterance(targetText);
             utterance.lang = 'ko-KR'; 
             utterance.rate = 0.85; 
-            utterance.volume = 1.0; // 強制音量最大化
 
             const voices = window.speechSynthesis.getVoices();
+            
+            // 強制過濾並選取最溫柔自然的韓語「女聲」
             const femaleKoreanVoice = voices.find(v => v.lang.startsWith('ko') && 
                 (v.name.toLowerCase().includes('female') || 
                  v.name.toLowerCase().includes('sunhi') || 
@@ -557,6 +560,7 @@
             
             if (femaleKoreanVoice) {
                 utterance.voice = femaleKoreanVoice;
+                console.log("成功套用標準女聲發音人: " + femaleKoreanVoice.name);
             } else {
                 const defaultKo = voices.find(v => v.lang.startsWith('ko'));
                 if (defaultKo) utterance.voice = defaultKo;
@@ -608,89 +612,67 @@
                 };
             }).catch(err => console.warn("未取得麥克風回放權限：", err));
     }
-
+// ⏱️ 刷新麥克風定時器（只要有在使用錄音，就重新計算 10 分鐘）
+    function resetMicSleepTimer() {
+        // 先清除上一次的計時器
+        if (micSleepTimeout) {
+            clearTimeout(micSleepTimeout);
+        }
+        
+        // 重新開始倒數 10 分鐘
+        micSleepTimeout = setTimeout(() => {
+            if (isRecording) {
+                console.log("⏱️ 偵測到網頁已一段時間未操作，系統自動關閉麥克風以節省電力。");
+                stopRecordingProcess();
+                
+                // 額外安全防護：確保 Web Speech API 辨識引擎也完全釋放
+                try { if (recognition) recognition.stop(); } catch(e){}
+                
+                const feedbackMsg = document.getElementById('feedback-message');
+                if (feedbackMsg) {
+                    feedbackMsg.innerText = "💤 麥克風已進入自動休眠，下次錄音時將自動重新啟用。";
+                    feedbackMsg.className = "feedback";
+                }
+            }
+        }, MIC_SLEEP_DURATION);
+    }
+    
+// 🎤 控制錄音的開關（加入自動休眠功能版）
     let startDelayTimeout;
-// 🎤 控制錄音的開關 (先錄音、後判定、完美音量相容版)
-    async function toggleRecord() {
+    function toggleRecord() {
+        if (!recognition) return;
         const recordBtn = document.getElementById('record-btn');
-        const playbackBtn = document.getElementById('playback-btn');
         const feedbackMsg = document.getElementById('feedback-message');
 
+        // 【新增】：只要使用者有點擊錄音動作，就刷新並重新計算 10 分鐘！
+        resetMicSleepTimer();
+
         if (!isRecording) {
-            // 【階段一：純錄音開始】
             isRecording = true;
-            audioChunks = []; // 清空之前的錄音
-            
-            recordBtn.innerText = "⏹️ 說完了，點我完成";
+            recordBtn.innerText = "🛑 停止錄音中...";
             recordBtn.classList.add('recording');
-            feedbackMsg.innerText = "🎤 請開始大聲跟讀...";
+            feedbackMsg.innerText = "🎙️ 系統預熱中，請稍候...";
             feedbackMsg.className = "feedback";
-
-            if (playbackBtn) {
-                playbackBtn.disabled = true; // 判定成功前，先把回放鎖住
-            }
-
-            try {
-                // 錄音期間，絕對不准語音辨識啟動，徹底避免硬體衝突
-                if (recognition) {
-                    try { recognition.abort(); } catch(e){}
-                }
-
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                mediaRecorder = new MediaRecorder(stream);
-                
-                mediaRecorder.ondataavailable = (e) => {
-                    if (e.data.size > 0) {
-                        audioChunks.push(e.data);
-                    }
-                };
-
-                mediaRecorder.onstop = () => {
-                    // 錄音機停止，立刻打包音檔
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                    audioUrl = URL.createObjectURL(audioBlob);
-                    
-                    // 釋放麥克風軌道，完全放開喇叭硬體，音量就不會變小了
-                    stream.getTracks().forEach(track => track.stop());
-
-                    // 【階段二：錄音結束，這時候才啟動語音辨識引擎來聽音比對】
-                    feedbackMsg.innerText = "⚙️ 語音判別中...";
-                    feedbackMsg.className = "feedback";
-
-                    if (recognition) {
-                        try {
-                            recognition.start(); // 這裡才啟動辨識
-                            console.log("錄音結束，啟動語音比對辨識...");
-                        } catch(e) {
-                            // 如果辨識引擎卡住，直接退回比對
-                            console.error("辨識引擎啟動失敗，請重新錄音");
-                        }
-                    }
-                };
-
+            
+            recognition.start();
+            if (mediaRecorder && mediaRecorder.state === "inactive") {
+                audioChunks = [];
                 mediaRecorder.start();
-
-            } catch (err) {
-                console.error("無法開啟麥克風：", err);
-                alert("請允許網頁取用麥克風才能錄音喔！");
-                isRecording = false;
-                recordBtn.innerText = "🎤 開始錄音";
-                recordBtn.classList.remove('recording');
             }
+
+            startDelayTimeout = setTimeout(() => {
+                if (isRecording) {
+                    feedbackMsg.innerText = "🎤 請開始大聲跟讀！";
+                }
+            }, 250);
 
         } else {
-            // 【使用者手動按完成】
-            isRecording = false;
-            recordBtn.innerText = "🎤 開始錄音";
-            recordBtn.classList.remove('recording');
-
-            if (mediaRecorder && mediaRecorder.state === "recording") {
-                try {
-                    mediaRecorder.stop(); // 觸發上面的 onstop，進入辨識階段
-                } catch(e) {
-                    console.error(e);
-                }
-            }
+            feedbackMsg.innerText = "⚙️ 正在彙整語音...";
+            clearTimeout(startDelayTimeout);
+            
+            setTimeout(() => {
+                stopRecordingProcess();
+            }, 400); 
         }
     }
 
