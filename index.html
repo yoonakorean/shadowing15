@@ -313,10 +313,10 @@
 
 <script>
     // ==========================================
-    // ⚠️ SUPABASE 雲端資料庫設定區 (請在此處貼上正確的值)
+    // ⚠️ SUPABASE 雲端資料庫設定區
     // ==========================================
-    const SUPABASE_URL = "https://qiffkfhwakmtxfljiyzz.supabase.co"; // ⬅️ 已自動幫您拿掉 /rest/v1/ 尾巴
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFpZmZrZmh3YWttdHhmbGppeXp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxODQ0NzIsImV4cCI6MjA5OTc2MDQ3Mn0.iUh5bZufh__Gxnn6zjz0XNEl9V7802Ho97d8IB66k74";             // ⬅️ 請填入您的 anon public 金鑰！
+    const SUPABASE_URL = "https://qiffkfhwakmtxfljiyzz.supabase.co"; 
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFpZmZrZmh3YWttdHhmbGppeXp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxODQ0NzIsImV4cCI6MjA5OTc2MDQ3Mn0.iUh5bZufh__Gxnn6zjz0XNEl9V7802Ho97d8IB66k74";             
     let dbClient = null; 
 
     function initSupabase() {
@@ -338,14 +338,13 @@
         }
     }
 
-    // 啟動連線檢查
     initSupabase();
 
     const sentences = [
         "이름은 뭐예요?", "어느 나라 사람이에요?", "어디에서 왔어요?", "직업은 뭐예요?",
         "지수는 경찰이에요.", "지수는 태국 사람이에요.", "마크는 의사예요.", "마크는 호주 사람이에요.",
         "영민은 매니저예요.", "영민은 중국 사람이에요.", "리쿠는 사장님이에요.", "리쿠는 일본 사람이에요.",
-        "아트는 간호사예요.", "아트는 캐나다 사람이에요.", "서리는 비서예요.", "서리는 필리핀 사람이에요.",
+        "아트를 간호사예요.", "아트를 캐나다 사람이에요.", "서리는 비서예요.", "서리는 필리핀 사람이에요.",
         "민수는 변호사예요.", "민수는 베트남 사람이에요.", "아дам은 공무원이에요.", "아дам은 독일 사람이에요."
     ];
 
@@ -361,9 +360,19 @@
     let audioUrl = null;
     let globalAudioPlayer = null;
 
-    // ⏱️ 麥克風自動休眠定時器
+    // ⏱️ 麥克風自動休眠定時器變數 (5分鐘)
     let micSleepTimeout = null;
-    const MIC_SLEEP_DURATION = 300000; // 設定時間：5分鐘 (300,000 毫秒)
+    const MIC_SLEEP_DURATION = 300000; 
+
+    function resetMicSleepTimer() {
+        if (micSleepTimeout) clearTimeout(micSleepTimeout);
+        micSleepTimeout = setTimeout(() => {
+            if (!isRecording) {
+                console.log("⏱️ 網頁閒置已達5分鐘，關閉麥克風防護啟用。");
+                try { if (recognition) recognition.stop(); } catch(e){}
+            }
+        }, MIC_SLEEP_DURATION);
+    }
 
     // 登入與進度回復
     async function loginUser() {
@@ -377,7 +386,6 @@
         document.getElementById('login-overlay').style.display = 'none';
         document.getElementById('main-container').style.display = 'block';
         
-        // 手機音訊通道預先手動解鎖
         try {
             globalAudioPlayer = new Audio();
             globalAudioPlayer.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
@@ -388,17 +396,13 @@
             console.error("無法建立全域解鎖播放器", e);
         }
 
-        // 載入進度
         await loadSavedProgress();
-        
-        // 初始化 UI
         initKeypad();
         loadSentence(0);
         initSpeechRecognition();
         updateLeaderboardView();
     }
 
-    // 載入進度邏輯 (最新相容 JSONB 格式版)
     async function loadSavedProgress() {
         let loaded = false;
         if (dbClient) {
@@ -433,7 +437,6 @@
         }
     }
 
-    // 儲存進度 (最新相容 JSONB 格式版)
     async function saveProgress() {
         if (!currentUser) return;
         localStorage.setItem(`korean_progress_${currentUser}`, JSON.stringify(expertProgress));
@@ -458,7 +461,6 @@
         }
     }
 
-    // 登出
     function logout() {
         currentUser = "";
         document.getElementById('login-overlay').style.display = 'flex';
@@ -467,7 +469,6 @@
         expertProgress = Array(20).fill(false);
     }
 
-    // 建立 1~20 數字鍵盤
     function initKeypad() {
         const keypad = document.getElementById('keypad');
         keypad.innerHTML = '';
@@ -529,24 +530,8 @@
         loadSentence(currentIdx);
     }
 
-// ⏱️ 麥克風自動休眠定時器變數 (5分鐘)
-let micSleepTimeout = null;
-    const MIC_SLEEP_DURATION = 300000; 
-
-    function resetMicSleepTimer() {
-        if (micSleepTimeout) clearTimeout(micSleepTimeout);
-        micSleepTimeout = setTimeout(() => {
-            if (!isRecording) {
-                console.log("⏱️ 網頁閒置已達5分鐘，關閉麥克風防護啟用。");
-                try { if (recognition) recognition.stop(); } catch(e){}
-                // ➔ 已將原本修改網頁文字 (feedback-message) 的程式碼刪除
-            }
-        }, MIC_SLEEP_DURATION);
-    }
-
     // 🔊 播放標準女聲 (保留現在的播放音檔 + 錄音時不能啟用功能)
     function speakStandard() {
-        // 【功能保留】：錄音時禁止播放
         if (isRecording) {
             console.warn("目前正在錄音");
             return; 
@@ -615,7 +600,9 @@ let micSleepTimeout = null;
         navigator.mediaDevices.getUserMedia({ audio: true })
             .then(stream => {
                 mediaRecorder = new MediaRecorder(stream);
-                mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+                mediaRecorder.ondataavailable = e => {
+                    if (e.data.size > 0) audioChunks.push(e.data);
+                };
                 mediaRecorder.onstop = () => {
                     const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
                     audioUrl = URL.createObjectURL(audioBlob);
@@ -623,7 +610,7 @@ let micSleepTimeout = null;
                 };
             }).catch(err => console.warn("未取得麥克風回放權限：", err));
             
-        resetMicSleepTimer(); // 初始啟動自動關閉計時
+        resetMicSleepTimer(); 
     }
 
     // 🎤 控制錄音的開關 (完全回到最初代：按了馬上停、秒判斷、秒回放速度)
@@ -633,7 +620,7 @@ let micSleepTimeout = null;
         const recordBtn = document.getElementById('record-btn');
         const feedbackMsg = document.getElementById('feedback-message');
 
-        resetMicSleepTimer(); // 有操作就刷新 10 分鐘限制
+        resetMicSleepTimer(); 
 
         if (!isRecording) {
             isRecording = true;
@@ -655,7 +642,6 @@ let micSleepTimeout = null;
             }, 250);
 
         } else {
-            // 完全恢復最初始的毫秒級別中斷打包，絕不拖泥帶水
             feedbackMsg.innerText = "⚙️ 正在彙整語音...";
             clearTimeout(startDelayTimeout);
             
@@ -665,16 +651,28 @@ let micSleepTimeout = null;
         }
     }
 
-    // 🛑 停止錄音輔助
+    // 🛑 修正：補回缺少的停止錄音輔助函數，處理核心硬體中斷與打包
     function stopRecordingProcess() {
-        if (isRecording) {
-            toggleRecord();
+        if (!isRecording) return;
+        isRecording = false;
+
+        const recordBtn = document.getElementById('record-btn');
+        if (recordBtn) {
+            recordBtn.innerText = "🎤 開始錄音";
+            recordBtn.classList.remove('recording');
+        }
+
+        // 停止語音引擎
+        try { if (recognition) recognition.stop(); } catch(e){}
+
+        // 停止錄音硬體並打包
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+            try { mediaRecorder.stop(); } catch(e){}
         }
     }
 
     // 📝 語音比對與結果判決
     function compareSpeech(userText) {
-        // 辨識到聲音了，立刻把語音辨識關閉，不佔用資源
         try { if (recognition) recognition.stop(); } catch(e){}
         
         const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；!,，。]/g, '');
@@ -697,8 +695,7 @@ let micSleepTimeout = null;
             feedbackMsg.className = "feedback text-danger";
         }
 
-        // 【核心修正】只有當正確或錯誤跳出來之後，回放按鈕才會亮起！
-        if (playbackBtn) {
+        if (playbackBtn && audioUrl) {
             playbackBtn.disabled = false;
         }
     }
@@ -725,7 +722,6 @@ let micSleepTimeout = null;
         submitBtn.disabled = (passedCount !== 20);
     }
 
-    // 送出成績
     async function submitToLeaderboard() {
         const finishTime = new Date().toLocaleString('zh-TW', { hour12: false });
         
@@ -754,7 +750,6 @@ let micSleepTimeout = null;
         loadSentence(0);
     }
 
-    // 讀取與渲染排行榜
     async function updateLeaderboardView() {
         const tbody = document.getElementById('leaderboard-body');
         tbody.innerHTML = '';
