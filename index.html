@@ -529,11 +529,26 @@
         loadSentence(currentIdx);
     }
 
-// 🔊 播放標準女聲（只增加：錄音時不能播放功能）
+// ⏱️ 麥克風自動休眠定時器變數 (5分鐘)
+let micSleepTimeout = null;
+    const MIC_SLEEP_DURATION = 300000; 
+
+    function resetMicSleepTimer() {
+        if (micSleepTimeout) clearTimeout(micSleepTimeout);
+        micSleepTimeout = setTimeout(() => {
+            if (!isRecording) {
+                console.log("⏱️ 網頁閒置已達5分鐘，關閉麥克風防護啟用。");
+                try { if (recognition) recognition.stop(); } catch(e){}
+                // ➔ 已將原本修改網頁文字 (feedback-message) 的程式碼刪除
+            }
+        }, MIC_SLEEP_DURATION);
+    }
+
+    // 🔊 播放標準女聲 (保留現在的播放音檔 + 錄音時不能啟用功能)
     function speakStandard() {
-        // ⚠️ 【新增保險限制】：如果目前正在錄音，直接攔截，不准播放聲音！
+        // 【功能保留】：錄音時禁止播放
         if (isRecording) {
-            console.warn("目前正在錄音中，禁止播放標準語音，以防音訊衝突。");
+            console.warn("目前正在錄音");
             return; 
         }
 
@@ -548,8 +563,6 @@
             utterance.rate = 0.85; 
 
             const voices = window.speechSynthesis.getVoices();
-            
-            // 強制過濾並選取最溫柔自然的韓語「女聲」
             const femaleKoreanVoice = voices.find(v => v.lang.startsWith('ko') && 
                 (v.name.toLowerCase().includes('female') || 
                  v.name.toLowerCase().includes('sunhi') || 
@@ -560,7 +573,6 @@
             
             if (femaleKoreanVoice) {
                 utterance.voice = femaleKoreanVoice;
-                console.log("成功套用標準女聲發音人: " + femaleKoreanVoice.name);
             } else {
                 const defaultKo = voices.find(v => v.lang.startsWith('ko'));
                 if (defaultKo) utterance.voice = defaultKo;
@@ -573,7 +585,7 @@
         }
     }
 
-    // 🎤 麥克風辨識主引擎 (保留)
+    // 🧠 麥克風辨識主引擎 (完全恢復最一剛開始的即時錄製架構)
     function initSpeechRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
@@ -582,7 +594,6 @@
         }
         recognition = new SpeechRecognition();
         recognition.lang = 'ko-KR';
-        
         recognition.continuous = true; 
         recognition.interimResults = false;
         recognition.maxAlternatives = 1;
@@ -608,44 +619,21 @@
                 mediaRecorder.onstop = () => {
                     const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
                     audioUrl = URL.createObjectURL(audioBlob);
-                    document.getElementById('playback-btn').disabled = false;
+                    document.getElementById('playback-btn').disabled = false; // 音檔光速生成，立刻亮起
                 };
             }).catch(err => console.warn("未取得麥克風回放權限：", err));
+            
+        resetMicSleepTimer(); // 初始啟動自動關閉計時
     }
-// ⏱️ 刷新麥克風定時器（只要有在使用錄音，就重新計算 10 分鐘）
-    function resetMicSleepTimer() {
-        // 先清除上一次的計時器
-        if (micSleepTimeout) {
-            clearTimeout(micSleepTimeout);
-        }
-        
-        // 重新開始倒數 10 分鐘
-        micSleepTimeout = setTimeout(() => {
-            if (isRecording) {
-                console.log("⏱️ 偵測到網頁已一段時間未操作，系統自動關閉麥克風以節省電力。");
-                stopRecordingProcess();
-                
-                // 額外安全防護：確保 Web Speech API 辨識引擎也完全釋放
-                try { if (recognition) recognition.stop(); } catch(e){}
-                
-                const feedbackMsg = document.getElementById('feedback-message');
-                if (feedbackMsg) {
-                    feedbackMsg.innerText = "💤 麥克風已進入自動休眠，下次錄音時將自動重新啟用。";
-                    feedbackMsg.className = "feedback";
-                }
-            }
-        }, MIC_SLEEP_DURATION);
-    }
-    
-// 🎤 控制錄音的開關（加入自動休眠功能版）
+
+    // 🎤 控制錄音的開關 (完全回到最初代：按了馬上停、秒判斷、秒回放速度)
     let startDelayTimeout;
     function toggleRecord() {
         if (!recognition) return;
         const recordBtn = document.getElementById('record-btn');
         const feedbackMsg = document.getElementById('feedback-message');
 
-        // 【新增】：只要使用者有點擊錄音動作，就刷新並重新計算 10 分鐘！
-        resetMicSleepTimer();
+        resetMicSleepTimer(); // 有操作就刷新 10 分鐘限制
 
         if (!isRecording) {
             isRecording = true;
@@ -667,6 +655,7 @@
             }, 250);
 
         } else {
+            // 完全恢復最初始的毫秒級別中斷打包，絕不拖泥帶水
             feedbackMsg.innerText = "⚙️ 正在彙整語音...";
             clearTimeout(startDelayTimeout);
             
