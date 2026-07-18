@@ -696,8 +696,8 @@
         }
     }
 
-    // 🛑 停止錄音（終極安全防禦版，絕不卡死）
-    function stopRecordingProcess() {
+  // 🛑 停止錄音（強制序列同步版）
+    async function stopRecordingProcess() {
         if (!isRecording) return;
         isRecording = false;
 
@@ -707,28 +707,28 @@
             recordBtn.classList.remove('recording');
         }
 
-        // 核心修正：將兩者完全抽離，互不干涉
-        
-        // 1. 處理語音辨識（用 abort 強制斷開，比 stop 更不容易卡住狀態）
+        // 1. 先用最高權限中斷辨識器，並強制等待一小段時間讓瀏覽器釋放硬體
         try { 
             recognition.abort(); 
-            console.log("🟢 辨識引擎已強制釋放");
+            console.log("🟢 辨識引擎已發出中斷訊號");
         } catch(e){
-            console.warn("停止辨識器異常（可忽略）:", e);
+            console.warn("停止辨識器異常:", e);
         }
 
-        // 2. 處理錄音硬體（確保一定會執行到這，觸發音訊打包）
+        // 延遲 200 毫秒，給瀏覽器喘息時間，錯開硬體競爭
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+        // 2. 這時候錄音機再收尾，確保拿到的音訊軌道是乾淨且沒有被辨識引擎干擾的
         try { 
             if (mediaRecorder && mediaRecorder.state !== "inactive") {
                 mediaRecorder.stop(); 
                 console.log("🟢 錄音硬體已成功停止並封裝");
             } else {
-                // 如果錄音器莫名其妙自己停了，手動把畫面救回來
                 document.getElementById('feedback-message').innerText = "⚠️ 錄音異常中斷，請再試一次。";
             }
         } catch(e){
             console.error("停止錄音器嚴重異常:", e);
-            document.getElementById('feedback-message').innerText = "⚠️ 彙整出現技術錯誤，請重新整理網頁。";
+            document.getElementById('feedback-message').innerText = "⚠️ 彙整出現技術錯誤。";
         }
     }
 
