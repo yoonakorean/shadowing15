@@ -597,19 +597,22 @@
             }
         };
 
+// 綁定原生麥克風錄音（供回放自我聲音用）
         navigator.mediaDevices.getUserMedia({ audio: true })
             .then(stream => {
                 mediaRecorder = new MediaRecorder(stream);
-                mediaRecorder.ondataavailable = e => {
-                    if (e.data.size > 0) audioChunks.push(e.data);
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
                 };
                 mediaRecorder.onstop = () => {
                     const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
                     audioUrl = URL.createObjectURL(audioBlob);
-                    document.getElementById('playback-btn').disabled = false; // 音檔光速生成，立刻亮起
+                    document.getElementById('playback-btn').disabled = false;
                 };
-            }).catch(err => console.warn("未取得麥克風回放權限：", err));
-            
+            }).catch(err => {
+                console.warn("無法取得錄音裝置（但不影響語音辨識判定）：", err);
+            });
+    }
         resetMicSleepTimer(); 
     }
 
