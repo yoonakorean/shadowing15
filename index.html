@@ -530,7 +530,7 @@
         loadSentence(currentIdx);
     }
 
-    // 🔊 播放標準女聲 (保留現在的播放音檔 + 錄音時不能啟用功能)
+    // 🔊 播放標準女聲
     function speakStandard() {
         if (isRecording) {
             console.warn("目前正在錄音");
@@ -570,7 +570,7 @@
         }
     }
 
-    // 🧠 麥克風辨識主引擎 (完全恢復最一剛開始的即時錄製架構)
+    // 🧠 麥克風辨識主引擎
     function initSpeechRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
@@ -597,7 +597,7 @@
             }
         };
 
-// 綁定原生麥克風錄音（供回放自我聲音用）
+        // 綁定原生麥克風錄音（供回放自我聲音用）
         navigator.mediaDevices.getUserMedia({ audio: true })
             .then(stream => {
                 mediaRecorder = new MediaRecorder(stream);
@@ -612,11 +612,11 @@
             }).catch(err => {
                 console.warn("無法取得錄音裝置（但不影響語音辨識判定）：", err);
             });
-    }
+
         resetMicSleepTimer(); 
     }
 
-    // 🎤 控制錄音的開關 (完全回到最初代：按了馬上停、秒判斷、秒回放速度)
+    // 🎤 控制錄音的開關
     let startDelayTimeout;
     function toggleRecord() {
         if (!recognition) return;
@@ -654,7 +654,7 @@
         }
     }
 
-    // 🛑 修正：補回缺少的停止錄音輔助函數，處理核心硬體中斷與打包
+    // 🛑 停止錄音輔助函數
     function stopRecordingProcess() {
         if (!isRecording) return;
         isRecording = false;
