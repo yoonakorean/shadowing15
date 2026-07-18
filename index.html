@@ -352,18 +352,19 @@
 
     const audioPlayback = document.getElementById('audioPlayback');
 
-    // 🚀 初始化 Web Speech API (語音辨識元件)
+  // 🚀 修改後的語音辨識初始化
     function initSpeechEngine() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (SpeechRecognition) {
             recognition = new SpeechRecognition();
             recognition.lang = 'ko-KR'; 
-            
-            // 🔥 關鍵改動：開啟持續辨識與即時回傳，解決判定緩慢的問題
             recognition.continuous = true; 
             recognition.interimResults = true; 
 
             recognition.onresult = (event) => {
+                // 如果根本還沒點擊「開始錄音」，直接過濾掉背景聲音（包含系統播音），防止污染
+                if (!isRecording) return;
+
                 let interimTranscript = "";
                 for (let i = event.resultIndex; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
@@ -372,19 +373,53 @@
                         interimTranscript += event.results[i][0].transcript;
                     }
                 }
-                // 即時在畫面上印出系統聽到的內容（讓使用者知道有在靈敏運作）
                 const currentShow = finalTranscript || interimTranscript;
-                document.getElementById('feedback-message').innerHTML = `正在聆聽：<span style="color:#666;">${currentShow}</span>`;
+                document.getElementById('feedback-message').innerHTML = `正在聆聽：<span style="color:#6366F1;">${currentShow}</span>`;
             };
 
             recognition.onerror = (event) => {
                 console.error("辨識引擎錯誤:", event.error);
             };
-
-            // ❌ 移除 recognition.onend 裡面自動觸發 stopRecordingProcess 的設定，
-            // 讓錄音和辨識由使用者點擊按鈕完全掌控，絕不搶先切斷音訊軌道！
         } else {
             alert("您的瀏覽器不支援 Web Speech API。建議使用 Chrome 瀏覽器！");
+        }
+    }
+
+    // 📝 修改後的最終裁決邏輯
+    function executeFinalComparison() {
+        const feedbackMsg = document.getElementById('feedback-message');
+        
+        // 1. 清理正確答案（去除所有空白與標點符號）
+        const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；!,，。]/g, '');
+        
+        // 2. 清理學生講的話（去除所有空白與標點符號）
+        const studentSpeechClean = finalTranscript.replace(/[\s\?\.；!,，。]/g, '');
+
+        console.log("標準答案(淨化):", cleanTarget);
+        console.log("學生發音(淨化):", studentSpeechClean);
+
+        if (!studentSpeechClean) {
+            feedbackMsg.innerText = "❌ 系統沒有聽到你的聲音，請大聲一點再試一次。";
+            feedbackMsg.className = "feedback text-danger";
+            return;
+        }
+
+        // 🔥 關鍵改動：只要學生講的內容「精確包含」了目標句子，或者完全一樣，就判定過關！
+        // 這樣可以徹底解決高手模式下，因為前後環境雜音或系統播音殘留導致無法過關的問題
+        if (studentSpeechClean === cleanTarget || studentSpeechClean.includes(cleanTarget) || cleanTarget.includes(studentSpeechClean)) {
+            feedbackMsg.innerHTML = `🎉 【過關】發音正確！<br><small style="color:gray;">(辨識結果: "${finalTranscript}")</small>`;
+            feedbackMsg.className = "feedback text-success";
+            
+            // 如果是挑戰模式，亮綠燈並儲存進度
+            if (currentMode === 'expert') {
+                expertProgress[currentIdx] = true;
+                saveProgress();
+                updateKeypadStatus();
+                updateSubmitButton();
+            }
+        } else {
+            feedbackMsg.innerHTML = `❌ 發音不太對，再試一次！<br><small style="color:gray;">(系統聽到: "${finalTranscript}")</small>`;
+            feedbackMsg.className = "feedback text-danger";
         }
     }
 
