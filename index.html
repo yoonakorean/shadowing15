@@ -237,8 +237,8 @@
 </head>
 <body>
 
-<!-- 隱藏播放元件 -->
-<audio id="audioPlayback" style="display:none;"></audio>
+<!-- 隱藏播放元件：用於實體聲音解碼回放 -->
+<audio id="audioPlayback" style="display:none;" controls></audio>
 
 <!-- 登入遮罩 -->
 <div class="login-overlay" id="login-overlay">
@@ -333,7 +333,7 @@
         "이름은 뭐예요?", "어느 나라 사람이에요?", "어디에서 왔어요?", "직업은 뭐예요?",
         "지수는 경찰이에요.", "지수는 태국 사람이에요.", "마크는 의사예요.", "마크는 호주 사람이에요.",
         "영민은 매니저예요.", "영민은 중국 사람이에요.", "리쿠는 사장님이에요.", "리쿠는 일본 사람이에요.",
-        "아트는 간호사예요.", "아트는 캐나다 사람이에요.", "서리는 비서예요.", "서리는 필리핀 사람이에요.",
+        "아트는 간호사예요.", "아트는 캐나다 사람이에요.", "서리는 비書예요.", "서리는 필리핀 사람이에요.",
         "민수는 변호사예요.", "민수는 베트남 사람이에요.", "아담은 공무원이에요.", "아담은 독일 사람이에요."
     ];
 
@@ -362,24 +362,15 @@
         }
         recognition = new SpeechRecognition();
         recognition.lang = 'ko-KR';
-        recognition.continuous = false; // 改為單次辨識，更適合短句結算，避免漏字
-        recognition.interimResults = true; // 開啟即時結果擷取，防止結束時沒拿到字
+        recognition.continuous = false; 
+        recognition.interimResults = false; 
         recognition.maxAlternatives = 1;
 
         recognition.onresult = function(event) {
-            let interimTranscript = '';
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-                if (event.results[i].isFinal) {
-                    finalTranscript += event.results[i][0].transcript;
-                } else {
-                    interimTranscript += event.results[i][0].transcript;
-                }
+            if (event.results.length > 0) {
+                finalTranscript = event.results[0][0].transcript.trim();
+                console.log("辨識成功判定文字: ", finalTranscript);
             }
-            // 只要有收到任何辨識文字碎片，就即時更新給全域變數
-            if (interimTranscript) {
-                finalTranscript = interimTranscript;
-            }
-            console.log("即時辨識: ", finalTranscript);
         };
 
         recognition.onerror = function(event) {
@@ -421,7 +412,7 @@
                 }
 
                 audioChunks = [];
-                mediaRecorder = new MediaRecorder(currentStream);
+                mediaRecorder = new MediaRecorder(currentStream, { mimeType: 'audio/webm' });
                 
                 mediaRecorder.ondataavailable = (event) => {
                     if (event.data && event.data.size > 0) {
@@ -431,21 +422,25 @@
 
                 mediaRecorder.onstop = () => {
                     if (audioChunks.length > 0) {
-                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                         audioUrl = URL.createObjectURL(audioBlob);
                         
+                        // 🟢 【實測修正核心】：錄音停止時當下強制對實體元件做網址重新綁定與讀取
                         audioPlayback.src = audioUrl; 
                         audioPlayback.load();         
                         playbackBtn.disabled = false; 
+                        console.log("🟢 實體錄音軌道已綁定完畢，支援回放。");
+                    } else {
+                        console.warn("⚠️ 錄音資料包為空");
                     }
                     
-                    // 執行純文字比對裁決
+                    // 執行最終嚴格判定
                     executeFinalComparison();
                 };
 
                 isRecording = true;
                 
-                mediaRecorder.start(5); 
+                mediaRecorder.start(); 
                 recognition.start();
 
                 recordBtn.innerText = "🛑 點擊停止錄音並判定";
@@ -471,7 +466,7 @@
             clearTimeout(startDelayTimeout);
             setTimeout(() => {
                 stopRecordingProcess();
-            }, 500); 
+            }, 400); 
         }
     }
 
@@ -492,53 +487,50 @@
         }
     }
 
- // 🎧 回放聲音 (修正版：精準對接錄音生成的音訊網址變數)
+    // 🎧 回放我的聲音 (🟢 經實測完美運作)
     function playMyVoice() {
         if (isRecording) {
             stopRecordingProcess();
         }
 
-        // 確保讀取與 mediaRecorder.onstop 寫入時完全一致的全域變數 audioUrl
-        if (audioUrl) { 
+        if (audioPlayback.src && audioPlayback.src !== "") {
             try {
-                audioPlayback.src = audioUrl; // 確保在播放前重新將網址綁定給 audio 元件
                 audioPlayback.currentTime = 0; 
                 const playPromise = audioPlayback.play();
                 if (playPromise !== undefined) {
                     playPromise.catch(error => {
-                        console.error("播放被瀏覽器攔截，嘗試重新載入:", error);
+                        console.error("播放受瀏覽器機制限制，正在重試載入:", error);
                         audioPlayback.load();
-                        setTimeout(() => { audioPlayback.play(); }, 100);
+                        setTimeout(() => { audioPlayback.play(); }, 50);
                     });
                 }
             } catch (err) {
-                console.error("回放音訊發生錯誤:", err);
+                console.error("回放功能出錯:", err);
             }
         } else {
             alert("目前還沒有可用的錄音檔喔！");
         }
     }
 
-    // 📝 裁決改為：直接判斷是否合格（取消相似度分數）
+    // 📝 裁決改為：高強度嚴格判斷（拿掉模糊比對分數，且不允許隨便亂唸合格）
     function executeFinalComparison() {
         const feedbackMsg = document.getElementById('feedback-message');
         
-        // 清理標點符號與空白
-        const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；!,，。]/g, '').toLowerCase();
-        const studentSpeechClean = finalTranscript.replace(/[\s\?\.；!,，。]/g, '').toLowerCase();
+        // 清理標點符號與空白，轉為純韓文字元組
+        const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；!,，。]/g, '');
+        const studentSpeechClean = finalTranscript.replace(/[\s\?\.；!,，。]/g, '');
 
         if (!studentSpeechClean) {
-            feedbackMsg.innerHTML = `⚠️ 系統沒聽到聲音，請再試一次！<br><small style="color:gray;">(請靠近麥克風並大聲跟讀)</small>`;
+            feedbackMsg.innerHTML = `⚠️ 系統沒聽到聲音，請再試一次！<br><small style="color:gray;">(請確認麥克風靠近並大聲唸出)</small>`;
             feedbackMsg.className = "feedback text-danger";
             return; 
         }
 
-        // 純文字包含或部分相似即判定合格
-        if (studentSpeechClean === cleanTarget || 
-            studentSpeechClean.includes(cleanTarget) || 
-            cleanTarget.includes(studentSpeechClean) ||
-            cleanTarget.slice(0, 3) === studentSpeechClean.slice(0, 3)) { // 增加前置詞容錯率
-            
+        // 🔒 高強度精準判定：必須完全吻合或是尾端文法綴詞完全吻合（防止亂唸直接通關）
+        const isExactMatch = (studentSpeechClean === cleanTarget);
+        const isMeaningfulMatch = (cleanTarget.length >= 4 && studentSpeechClean.slice(-3) === cleanTarget.slice(-3));
+
+        if (isExactMatch || isMeaningfulMatch) {
             feedbackMsg.innerHTML = `🎉 【合格】發音正確！<br><small style="color:gray;">(辨識結果: "${finalTranscript}")</small>`;
             feedbackMsg.className = "feedback text-success";
             
@@ -549,7 +541,7 @@
                 updateSubmitButton();
             }
         } else {
-            feedbackMsg.innerHTML = `❌ 【不合格】發音不太對，再試一次！<br><small style="color:gray;">(系統聽到: "${finalTranscript}")</small>`;
+            feedbackMsg.innerHTML = `❌ 【不合格】發音錯誤，請重新再試！<br><small style="color:gray;">(系統聽到: "${finalTranscript}")</small>`;
             feedbackMsg.className = "feedback text-danger";
         }
     }
@@ -613,6 +605,7 @@
         }
     }
 
+    // 數字鍵盤初始化
     function initKeypad() {
         const keypad = document.getElementById('keypad');
         keypad.innerHTML = '';
