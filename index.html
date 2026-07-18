@@ -201,18 +201,12 @@
         .btn-play { background: #3B82F6; color: white; }
         .btn-play:hover { background: #2563EB; }
         .btn-record { background: #EF4444; color: white; }
-        .btn-record.recording { animation: pulse 1.5s infinite; }
+        .btn-record.recording { background: #B91C1C; }
         .btn-playback { background: #10B981; color: white; }
         .btn-playback:disabled { background: #E5E7EB; color: #9CA3AF; cursor: not-allowed; }
 
-        @keyframes pulse {
-            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-            70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
-            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-        }
-
         /* 反饋 */
-        .feedback { text-align: center; font-size: 18px; font-weight: bold; margin-bottom: 25px; height: 30px; }
+        .feedback { text-align: center; font-size: 18px; font-weight: bold; margin-bottom: 25px; min-height: 30px; }
         .text-success { color: var(--success); }
         .text-danger { color: #EF4444; }
 
@@ -243,7 +237,7 @@
 </head>
 <body>
 
-<!-- 隱藏的 HTML5 原生音訊播放元件，用於穩定儲存 Blob URL -->
+<!-- 隱藏播放元件，用來暫存每一次點擊生成的 Blob URL -->
 <audio id="audioPlayback" style="display:none;"></audio>
 
 <!-- 登入遮罩 -->
@@ -323,24 +317,16 @@
     let dbClient = null; 
 
     function initSupabase() {
-        if (SUPABASE_URL === "" || SUPABASE_ANON_KEY === "YOUR_SUPABASE_ANON_KEY") {
-            console.warn("⚠️ 偵測到尚未修改 Supabase 金鑰設定！");
-            return;
-        }
-        
+        if (SUPABASE_URL === "" || SUPABASE_ANON_KEY === "YOUR_SUPABASE_ANON_KEY") return;
         if (typeof supabase !== 'undefined' && supabase.createClient) {
             try {
                 dbClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
                 console.log("🟢 Supabase 雲端連線成功初始化！");
-            } catch(e) {
-                console.error("🔴 Supabase 初始化失敗：", e);
-            }
+            } catch(e) { console.error(e); }
         } else {
-            console.warn("⚠️ 偵測到 Supabase SDK 尚未完全載入，0.5秒後重試...");
             setTimeout(initSupabase, 500); 
         }
     }
-
     initSupabase();
 
     const sentences = [
@@ -356,12 +342,13 @@
     let currentMode = 'practice';
     let expertProgress = Array(20).fill(false);
 
-    // 🎙️ 錄音與辨識核心狀態變數
+    // 🎙️ 錄音與辨識核心狀態
     let mediaRecorder = null;
     let audioChunks = [];
     let recognition = null;
     let isRecording = false;
     let currentStream = null;
+    let finalTranscript = ""; // 用來即時累積辨識到的文字
 
     const audioPlayback = document.getElementById('audioPlayback');
 
@@ -371,29 +358,31 @@
         if (SpeechRecognition) {
             recognition = new SpeechRecognition();
             recognition.lang = 'ko-KR'; 
-            recognition.continuous = false; // 唸完句子後自動判定結束
-            recognition.interimResults = false; 
+            
+            // 🔥 關鍵改動：開啟持續辨識與即時回傳，解決判定緩慢的問題
+            recognition.continuous = true; 
+            recognition.interimResults = true; 
 
             recognition.onresult = (event) => {
-                const studentSpeech = event.results[0][0].transcript.replace(/\s+/g, ""); // 去除空白
-                compareSpeech(studentSpeech, event.results[0][0].transcript);
+                let interimTranscript = "";
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+                // 即時在畫面上印出系統聽到的內容（讓使用者知道有在靈敏運作）
+                const currentShow = finalTranscript || interimTranscript;
+                document.getElementById('feedback-message').innerHTML = `正在聆聽：<span style="color:#666;">${currentShow}</span>`;
             };
 
             recognition.onerror = (event) => {
                 console.error("辨識引擎錯誤:", event.error);
-                if (event.error === 'no-speech') {
-                    const feedbackMsg = document.getElementById('feedback-message');
-                    feedbackMsg.innerText = "❌ 沒有聽到聲音，請大聲一點再試一次";
-                    feedbackMsg.className = "feedback text-danger";
-                }
             };
 
-            // 當辨識因為講完話自動斷掉或結束時，連動中斷錄音器封裝
-            recognition.onend = () => {
-                if (isRecording) {
-                    stopRecordingProcess();
-                }
-            };
+            // ❌ 移除 recognition.onend 裡面自動觸發 stopRecordingProcess 的設定，
+            // 讓錄音和辨識由使用者點擊按鈕完全掌控，絕不搶先切斷音訊軌道！
         } else {
             alert("您的瀏覽器不支援 Web Speech API。建議使用 Chrome 瀏覽器！");
         }
@@ -411,7 +400,7 @@
         document.getElementById('login-overlay').style.display = 'none';
         document.getElementById('main-container').style.display = 'block';
         
-        initSpeechEngine(); // 初始化辨識引擎
+        initSpeechEngine(); 
         await loadSavedProgress();
         initKeypad();
         loadSentence(0);
@@ -422,32 +411,18 @@
         let loaded = false;
         if (dbClient) {
             try {
-                const { data, error } = await dbClient
-                    .from('user_progress')
-                    .select('progress')
-                    .eq('name', currentUser);
-                
+                const { data, error } = await dbClient.from('user_progress').select('progress').eq('name', currentUser);
                 if (!error && data && data.length > 0 && data[0].progress) {
                     const rawProgress = data[0].progress;
                     expertProgress = Array.isArray(rawProgress) ? rawProgress : JSON.parse(rawProgress);
                     loaded = true;
-                    console.log("🟢 成功自 Supabase 雲端載入進度：", expertProgress);
                 }
-            } catch (err) {
-                console.warn("自雲端讀取進度時發生錯誤，轉向本地儲存：", err);
-            }
+            } catch (err) { console.warn(err); }
         }
-
         if (!loaded) {
             const savedData = localStorage.getItem(`korean_progress_${currentUser}`);
             if (savedData) {
-                try {
-                    expertProgress = JSON.parse(savedData);
-                } catch(e) {
-                    expertProgress = Array(20).fill(false);
-                }
-            } else {
-                expertProgress = Array(20).fill(false);
+                try { expertProgress = JSON.parse(savedData); } catch(e) { expertProgress = Array(20).fill(false); }
             }
         }
     }
@@ -455,24 +430,8 @@
     async function saveProgress() {
         if (!currentUser) return;
         localStorage.setItem(`korean_progress_${currentUser}`, JSON.stringify(expertProgress));
-
         if (dbClient) {
-            try {
-                const { error } = await dbClient
-                    .from('user_progress')
-                    .upsert(
-                        { name: currentUser, progress: expertProgress }, 
-                        { onConflict: 'name' }
-                    );
-                
-                if (error) {
-                    console.error("🔴 雲端儲存失敗原因：", error.message);
-                } else {
-                    console.log("🟢 進度已成功同步備份至 Supabase 雲端！");
-                }
-            } catch (err) {
-                console.error("雲端備份時發生非預期錯誤：", err);
-            }
+            try { await dbClient.from('user_progress').upsert({ name: currentUser, progress: expertProgress }, { onConflict: 'name' }); } catch (err) { console.error(err); }
         }
     }
 
@@ -496,7 +455,7 @@
             btn.className = 'num-btn';
             btn.id = `num-btn-${i}`;
             btn.innerText = i + 1;
-            btn.onclick = () => loadSentence(i);
+            btn.onclick = () => { if(!isRecording) loadSentence(i); };
             keypad.appendChild(btn);
         }
         updateKeypadStatus();
@@ -530,13 +489,14 @@
         }
 
         document.getElementById('playback-btn').disabled = true;
-        audioPlayback.src = "";
+        audioPlayback.removeAttribute('src'); // 徹底清空舊音訊路徑
         document.getElementById('feedback-message').innerText = "準備好後，點擊「開始錄音」";
         document.getElementById('feedback-message').className = "feedback";
         updateKeypadStatus();
     }
 
     function setMode(mode) {
+        if (isRecording) return;
         currentMode = mode;
         document.getElementById('btn-practice-mode').classList.toggle('active', mode === 'practice');
         document.getElementById('btn-expert-mode').classList.toggle('active', mode === 'expert');
@@ -549,40 +509,22 @@
         loadSentence(currentIdx);
     }
 
-    // 🔊 播放標準女聲
     function speakStandard() {
         if (isRecording) return; 
-
         const targetText = sentences[currentIdx];
         try {
             window.speechSynthesis.cancel(); 
-
             const utterance = new SpeechSynthesisUtterance(targetText);
             utterance.lang = 'ko-KR'; 
             utterance.rate = 0.85; 
-
             const voices = window.speechSynthesis.getVoices();
-            const femaleKoreanVoice = voices.find(v => v.lang.startsWith('ko') && 
-                (v.name.toLowerCase().includes('female') || 
-                 v.name.toLowerCase().includes('sunhi') || 
-                 v.name.toLowerCase().includes('google') || 
-                 v.name.toLowerCase().includes('siri') ||
-                 v.name.toLowerCase().includes('yuna') ||
-                 v.name.toLowerCase().includes('hj'))); 
-            
-            if (femaleKoreanVoice) {
-                utterance.voice = femaleKoreanVoice;
-            } else {
-                const defaultKo = voices.find(v => v.lang.startsWith('ko'));
-                if (defaultKo) utterance.voice = defaultKo;
-            }
+            const femaleKoreanVoice = voices.find(v => v.lang.startsWith('ko') && (v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('sunhi') || v.name.toLowerCase().includes('google') || v.name.toLowerCase().includes('yuna'))); 
+            if (femaleKoreanVoice) utterance.voice = femaleKoreanVoice;
             window.speechSynthesis.speak(utterance);
-        } catch(e) {
-            console.error("語音播放失敗：", e);
-        }
+        } catch(e) { console.error(e); }
     }
 
-    // 🎤 整合「即時辨識與回放」的錄音與音訊硬體控制開關
+    // 🎤 控制開關
     async function toggleRecord() {
         if (!recognition) {
             alert("語音辨識系統未就緒，請重新整理頁面。");
@@ -593,13 +535,14 @@
         const feedbackMsg = document.getElementById('feedback-message');
 
         if (!isRecording) {
-            // 1. 開啟麥克風並【套用原汁原味設定（關閉自動音量調整、降噪與回音消除）】，確保音質無損與回放成功率
+            // 每次全新獲取乾淨的音訊串流，避免被前一次的快取阻斷
             try {
+                finalTranscript = ""; // 清空上次辨識字
                 currentStream = await navigator.mediaDevices.getUserMedia({
                     audio: {
-                        autoGainControl: false,  // 關鍵：關閉自動增益
-                        echoCancellation: false, // 關鍵：關閉回音消除
-                        noiseSuppression: false  // 關鍵：關閉降噪
+                        autoGainControl: false,  
+                        echoCancellation: false, 
+                        noiseSuppression: false  
                     }
                 });
 
@@ -607,31 +550,43 @@
                 mediaRecorder = new MediaRecorder(currentStream);
                 
                 mediaRecorder.ondataavailable = (event) => {
-                    if (event.data.size > 0) audioChunks.push(event.data);
+                    if (event.data && event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
                 };
 
-                // 2. 錄音結束處理（產生原生相容的 Blob 並無縫對接 HTML5 隱藏播放器）
+                // 當錄音器「完全確認停止」後，才去包裝 Blob 並釋放麥克風軌道
                 mediaRecorder.onstop = () => {
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
-                    const audioUrl = URL.createObjectURL(audioBlob);
-                    audioPlayback.src = audioUrl; // 把檔案傳遞給播放器儲存
-                    playbackBtn.disabled = false;  // 點亮回放按鈕
+                    if (audioChunks.length > 0) {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
+                        const audioUrl = URL.createObjectURL(audioBlob);
+                        
+                        audioPlayback.src = audioUrl; // 存入隱藏播放器
+                        audioPlayback.load();         // 強制瀏覽器重整音訊源
+                        playbackBtn.disabled = false; // 亮起回放按鈕
+                        console.log("🟢 音訊 Blob 封裝成功，已可重覆回放！");
+                    } else {
+                        console.warn("⚠️ 未收集到足夠的音訊碎片");
+                    }
                     
-                    // 確實釋放與切斷本次錄音的麥克風硬體軌道，防止佔用卡死
+                    // 確實關閉硬體軌道，不霸佔麥克風
                     if (currentStream) {
                         currentStream.getTracks().forEach(track => track.stop());
                         currentStream = null;
                     }
+
+                    // 錄音完全卡落，立即進行字串比對判決（再也不用等2秒！）
+                    executeFinalComparison();
                 };
 
-                // 3. 同步啟動錄音與辨識
+                // 同步啟動
                 isRecording = true;
-                mediaRecorder.start();
+                mediaRecorder.start(10); // 每 10 毫秒就切分一次碎片，確保完整性
                 recognition.start();
 
-                recordBtn.innerText = "🛑 停止錄音 (或唸完自動停止)";
+                recordBtn.innerText = "🛑 點擊停止錄音並判定";
                 recordBtn.classList.add('recording');
-                feedbackMsg.innerText = "🎤 正在錄音與辨識中，請開始跟讀...";
+                feedbackMsg.innerText = "🎤 正在錄音中，請開始跟讀...";
                 feedbackMsg.className = "feedback";
                 playbackBtn.disabled = true;
 
@@ -643,14 +598,14 @@
             }
         } else {
             // 手動點擊停止
-            feedbackMsg.innerText = "⚙️ 正在彙整語音...";
+            feedbackMsg.innerText = "⚙️ 正在即時結算分數...";
             stopRecordingProcess();
         }
     }
 
-    // 🛑 停止錄音與辨識進程（防止重複呼叫與卡住死鎖）
+    // 🛑 停止錄音與辨識進程
     function stopRecordingProcess() {
-        if (!isRecording) return; // 安全鎖：避免重複觸發
+        if (!isRecording) return; 
         isRecording = false;
 
         const recordBtn = document.getElementById('record-btn');
@@ -659,31 +614,31 @@
             recordBtn.classList.remove('recording');
         }
 
-        // 停止錄音器
+        // 先關辨識器
+        if (recognition) {
+            try { recognition.stop(); } catch (e) { console.log(e); }
+        }
+
+        // 後關錄音器，觸發 mediaRecorder.onstop 進行最終裁決與 Blob 綁定
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
             try { mediaRecorder.stop(); } catch(e) { console.error(e); }
         }
-        
-        // 停止辨識器
-        if (recognition) {
-            try {
-                recognition.stop();
-            } catch (e) {
-                // 捕捉辨識已經自然結束時重複呼叫的異常，優雅跳過
-                console.log("辨識器早已自然關閉");
-            }
-        }
     }
 
-    // 📝 完美的語音比對與判決邏輯
-    function compareSpeech(studentSpeechClean, rawTranscript) {
-        const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；!,，。]/g, '');
+    // 📝 最終裁決邏輯
+    function executeFinalComparison() {
         const feedbackMsg = document.getElementById('feedback-message');
+        const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；!,，。]/g, '');
+        const studentSpeechClean = finalTranscript.replace(/[\s\?\.；!,，。]/g, '');
 
-        feedbackMsg.innerHTML = `系統聽到：<b>${rawTranscript}</b>`;
+        if (!finalTranscript) {
+            feedbackMsg.innerText = "❌ 系統沒有辨識到有效的韓語發音，請再試一次。";
+            feedbackMsg.className = "feedback text-danger";
+            return;
+        }
 
         if (studentSpeechClean === cleanTarget) {
-            feedbackMsg.innerText = `🎉 發音正確！過關！(辨識結果: "${rawTranscript}")`;
+            feedbackMsg.innerHTML = `🎉 發音正確！過關！<br><small style="color:gray;">(辨識結果: "${finalTranscript}")</small>`;
             feedbackMsg.className = "feedback text-success";
             
             if (currentMode === 'expert') {
@@ -693,7 +648,7 @@
                 updateSubmitButton();
             }
         } else {
-            feedbackMsg.innerText = `❌ 發音似乎不太對，再試一次！(系統聽到: "${rawTranscript}")`;
+            feedbackMsg.innerHTML = `❌ 發音似乎不太對，再試一次！<br><small style="color:gray;">(系統聽到: "${finalTranscript}")</small>`;
             feedbackMsg.className = "feedback text-danger";
         }
     }
@@ -702,9 +657,10 @@
     function playMyVoice() {
         if (audioPlayback.src) {
             try {
+                audioPlayback.currentTime = 0; // 每次播放都拉回最開頭
                 audioPlayback.play();
             } catch (err) {
-                alert("播放被瀏覽器阻擋，請再按一次！");
+                alert("播放被瀏覽器阻擋，請再試一次！");
                 console.error(err);
             }
         } else {
@@ -721,20 +677,12 @@
 
     async function submitToLeaderboard() {
         const finishTime = new Date().toLocaleString('zh-TW', { hour12: false });
-        
         let list = JSON.parse(localStorage.getItem('korean_global_board')) || [];
         list.push({ name: currentUser, time: finishTime });
         localStorage.setItem('korean_global_board', JSON.stringify(list));
 
         if (dbClient) {
-            try {
-                const { error } = await dbClient
-                    .from('leaderboard')
-                    .insert([{ name: currentUser, time: finishTime }]);
-                if (error) throw error;
-            } catch (err) {
-                console.error("線上資料庫同步失敗：", err);
-            }
+            try { await dbClient.from('leaderboard').insert([{ name: currentUser, time: finishTime }]); } catch (err) { console.error(err); }
         }
 
         alert(`恭喜 ${currentUser}！20句高手模式大滿貫通關！`);
@@ -751,38 +699,24 @@
         const tbody = document.getElementById('leaderboard-body');
         if (!tbody) return;
         tbody.innerHTML = '';
-
         let list = [];
-
         if (dbClient) {
             try {
-                const { data, error } = await dbClient
-                    .from('leaderboard')
-                    .select('*')
-                    .order('id', { ascending: false });
+                const { data, error } = await dbClient.from('leaderboard').select('*').order('id', { ascending: false });
                 if (!error && data) list = data;
-            } catch (err) {
-                console.warn("無法連接 Supabase，將使用本地模式：", err);
-            }
+            } catch (err) { console.warn(err); }
         }
-
         if (list.length === 0) {
             list = JSON.parse(localStorage.getItem('korean_global_board')) || [];
             list.reverse(); 
         }
-
         if (list.length === 0) {
             tbody.innerHTML = `<tr><td colspan="3" style="color: #9CA3AF;">線上暫無排行，快來成為第一個通關的人！</td></tr>`;
             return;
         }
-
         list.forEach((item, index) => {
             const row = document.createElement('tr');
-            row.innerHTML = `
-                <td><strong>#${index + 1}</strong></td>
-                <td>${escapeHTML(item.name)}</td>
-                <td>${item.time}</td>
-            `;
+            row.innerHTML = `<td><strong>#${index + 1}</strong></td><td>${escapeHTML(item.name)}</td><td>${item.time}</td>`;
             tbody.appendChild(row);
         });
     }
