@@ -352,7 +352,7 @@
 
     const audioPlayback = document.getElementById('audioPlayback');
 
-    // 🚀 1. 語音辨識初始化（更名對齊 loginUser 的呼叫，修復大當機）
+    // 🚀 1. 語音辨識初始化
     function initSpeechEngine() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
@@ -361,28 +361,27 @@
         }
         recognition = new SpeechRecognition();
         recognition.lang = 'ko-KR';
-        recognition.continuous = false; // 單次辨識最為穩定
+        recognition.continuous = false; 
         recognition.interimResults = false;
 
         recognition.onresult = function(event) {
             if (event.results.length > 0) {
                 finalTranscript = event.results[0][0].transcript.trim();
-                console.log("=== 語音辨識成功抓到文字 ===", finalTranscript);
+                console.log("=== 語音辨識文字 ===", finalTranscript);
             }
         };
 
         recognition.onerror = function(event) {
-            console.error("辨識引擎錯誤:", event.error);
+            console.error("辨識引擎錯誤或無聲音輸入:", event.error);
         };
 
-        // 辨識自然結束或手動停止時，自動觸發分數判定
+        // 只要辨識結束，就進行聽打文字對齊比對
         recognition.onend = function() {
-            console.log("辨識進程結束，執行最終比對");
             executeFinalComparison();
         };
     }
 
-    // 🎤 2. 控制開關（按鈕點擊時：錄音與辨識完全同步啟動）
+    // 🎤 2. 控制開關（按鈕點擊時：錄音與辨識同步啟動）
     async function toggleRecord() {
         if (!recognition) {
             alert("語音辨識系統未就緒，請重新整理頁面。");
@@ -393,7 +392,6 @@
         const feedbackMsg = document.getElementById('feedback-message');
 
         if (!isRecording) {
-            // 中斷播放中的音訊
             window.speechSynthesis.cancel();
             try { audioPlayback.pause(); } catch(e){}
 
@@ -401,7 +399,7 @@
                 finalTranscript = ""; 
                 audioChunks = [];     
                 
-                // 撈取乾淨的麥克風串流
+                // 獲取最穩定的音訊串流
                 currentStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(currentStream);
                 
@@ -411,6 +409,7 @@
                     }
                 };
 
+                // 原地生成音檔，不管有沒有說話，只要點擊停止就保留當場聲音
                 mediaRecorder.onstop = () => {
                     if (audioChunks.length > 0) {
                         const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
@@ -418,36 +417,36 @@
                         
                         audioPlayback.src = audioUrl; 
                         audioPlayback.load();         
-                        playbackBtn.disabled = false; // 亮起回放按鈕
-                        console.log("🟢 本地錄音檔已成功生成，回放就緒");
+                        playbackBtn.disabled = false; // 開啟回放功能
+                        console.log("🟢 現場錄音已存檔，隨時可供回放");
                     }
 
-                    // 釋放麥克風
+                    // 徹底關閉麥克風硬體
                     if (currentStream) {
                         currentStream.getTracks().forEach(track => track.stop());
                         currentStream = null;
                     }
                 };
 
-                // 標記並同時啟動錄音與辨識
+                // 同時啟動
                 isRecording = true;
                 mediaRecorder.start(); 
                 recognition.start();   
 
                 recordBtn.innerText = "🛑 點擊停止錄音並判定";
                 recordBtn.classList.add('recording');
-                feedbackMsg.innerText = "🎤 請開始大聲跟讀韓文句子...";
+                feedbackMsg.innerText = "🎤 錄音聆聽中...請朗讀句子。";
                 feedbackMsg.className = "feedback";
                 playbackBtn.disabled = true;
 
             } catch (err) {
                 console.error("無法存取麥克風設備:", err);
-                feedbackMsg.innerText = "⚠️ 麥克風開啟失敗，請檢查權限設定";
+                feedbackMsg.innerText = "⚠️ 麥克防開啟失敗，請檢查權限設定";
                 feedbackMsg.className = "feedback text-danger";
                 isRecording = false;
             }
         } else {
-            feedbackMsg.innerText = "⚙️ 正在結算分數中...";
+            feedbackMsg.innerText = "⚙️ 正在判定文字比對...";
             stopRecordingProcess();
         }
     }
@@ -471,7 +470,7 @@
         }
     }
 
-    // 🎧 4. 回放我的聲音
+    // 🎧 4. 回放當場的現場聲音
     function playMyVoice() {
         if (isRecording) {
             stopRecordingProcess();
@@ -489,21 +488,23 @@
         }
     }
 
-    // 📝 5. 比對裁決（回歸標準文字精準比對功能）
+    // 📝 5. 聽打模式判定（不計分，文字只要對了就直接過關）
     function executeFinalComparison() {
         const feedbackMsg = document.getElementById('feedback-message');
         
+        // 移除文字內所有的空格及標點符號，只比對純韓文字母
         const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；!,，。]/g, '');
         const studentSpeechClean = finalTranscript.replace(/[\s\?\.；!,，。]/g, '');
 
         if (!studentSpeechClean) {
-            feedbackMsg.innerText = "❌ 系統沒有聽到清楚的韓語發音，請再試一次。";
+            feedbackMsg.innerHTML = `❌ 系統未辨識到明確的韓語文字，請再試一次！<br><small style="color:gray;">(現場聲音已保留，可點擊「回放我的聲音」確認)</small>`;
             feedbackMsg.className = "feedback text-danger";
             return; 
         }
 
+        // 聽打模式：文字完全相符或包含，直接視為正確過關
         if (studentSpeechClean === cleanTarget || cleanTarget.includes(studentSpeechClean)) {
-            feedbackMsg.innerHTML = `🎉 【過關】發音正確！<br><small style="color:gray;">(辨識結果: "${finalTranscript}")</small>`;
+            feedbackMsg.innerHTML = `🎉 【過關】辨識文字完全正確！<br><small style="color:gray;">(辨識結果: "${finalTranscript}")</small>`;
             feedbackMsg.className = "feedback text-success";
             
             if (currentMode === 'expert') {
@@ -513,7 +514,7 @@
                 updateSubmitButton();
             }
         } else {
-            feedbackMsg.innerHTML = `❌ 發音不太對，再試一次！<br><small style="color:gray;">(系統聽到: "${finalTranscript}")</small>`;
+            feedbackMsg.innerHTML = `❌ 文字不符，請再試一次！<br><small style="color:gray;">(系統聽到: "${finalTranscript}")</small>`;
             feedbackMsg.className = "feedback text-danger";
         }
     }
@@ -530,7 +531,7 @@
         document.getElementById('login-overlay').style.display = 'none';
         document.getElementById('main-container').style.display = 'block';
         
-        initSpeechEngine(); // 完美對齊！
+        initSpeechEngine(); 
         await loadSavedProgress();
         initKeypad();
         loadSentence(0);
