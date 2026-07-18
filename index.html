@@ -586,7 +586,7 @@
         }
     }
 
-    // 🎤 控制開關（按鈕點擊事件）
+// 🎤 終極修正：控制開關（音軌共享機制）
     async function toggleRecord() {
         if (!recognition) {
             alert("語音辨識系統未就緒，請重新整理頁面。");
@@ -597,22 +597,26 @@
         const feedbackMsg = document.getElementById('feedback-message');
 
         if (!isRecording) {
-            // 🔥 【新增防呆】開始錄音前，先強制中斷任何正在播放的標準語音，避免混音
+            // 強制中斷所有播放中的聲音
             window.speechSynthesis.cancel();
-            // 同時也暫停正在回放的聲音（如果有）
             try { audioPlayback.pause(); } catch(e){}
 
             try {
                 finalTranscript = ""; // 清空上次辨識字
-                currentStream = await navigator.mediaDevices.getUserMedia({
-                    audio: {
-                        autoGainControl: false,  
-                        echoCancellation: false, 
-                        noiseSuppression: false  
-                    }
-                });
+                
+                // 🔥 【核心修正】如果目前沒有常駐音軌，才去跟瀏覽器要權限
+                if (!currentStream || !currentStream.active) {
+                    currentStream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            echoCancellation: true, 
+                            noiseSuppression: true,  
+                            autoGainControl: true    
+                        }
+                    });
+                }
 
                 audioChunks = [];
+                // 🔥 【核心修正】直接複用 currentStream，絕不重抓，避免硬體鎖死
                 mediaRecorder = new MediaRecorder(currentStream);
                 
                 mediaRecorder.ondataavailable = (event) => {
@@ -622,33 +626,36 @@
                 };
 
                 mediaRecorder.onstop = () => {
+                    console.log("錄音碎片總數:", audioChunks.length);
                     if (audioChunks.length > 0) {
-                        const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
+                        // 確保使用標準的音訊格式進行封裝
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
                         const audioUrl = URL.createObjectURL(audioBlob);
                         
                         audioPlayback.src = audioUrl; 
                         audioPlayback.load();         
                         playbackBtn.disabled = false; 
-                        console.log("🟢 音訊已可重覆回放！");
+                        console.log("🟢 錄音實體檔案已成功生成並綁定！");
                     } else {
-                        console.warn("⚠️ 未收集到足夠的音訊碎片");
-                    }
-                    
-                    if (currentStream) {
-                        currentStream.getTracks().forEach(track => track.stop());
-                        currentStream = null;
+                        console.warn("⚠️ 依舊沒有收集到錄音碎片，硬體衝突仍存在");
                     }
 
+                    // 💡 【核心修正】這裡「不要」去執行 track.stop()！
+                    // 讓 currentStream 繼續活著，辨識引擎才不會死掉，下次錄音也能直接複用。
+                    
+                    // 執行最終比對裁決
                     executeFinalComparison();
                 };
 
+                // 標記開始錄音
                 isRecording = true;
-                mediaRecorder.start(10); 
-                recognition.start();
+                
+                // 🔥 縮短切片時間至 5 毫秒，強制瀏覽器更頻繁地灌入音訊碎片，防止漏字
+                mediaRecorder.start(5); 
 
                 recordBtn.innerText = "🛑 點擊停止錄音並判定";
                 recordBtn.classList.add('recording');
-                feedbackMsg.innerText = "🎤 正在錄音中，請開始跟讀...";
+                feedbackMsg.innerText = "🎤 已經準備好了，請開始跟讀...";
                 feedbackMsg.className = "feedback";
                 playbackBtn.disabled = true;
 
@@ -659,12 +666,15 @@
                 isRecording = false;
             }
         } else {
-            feedbackMsg.innerText = "⚙️ 正在判別中...";
-            stopRecordingProcess();
+            feedbackMsg.innerText = "⚙️ 正在即時結算分數...";
+            // 🔥 給瀏覽器 50 毫秒的緩衝時間，讓它把最後講的音節完整寫入 mediaRecorder 再執行停止
+            setTimeout(() => {
+                stopRecordingProcess();
+            }, 500); 
         }
     }
 
-    // 🛑 停止錄音與辨識進程
+    // 🛑 終極修正：停止錄音進程
     function stopRecordingProcess() {
         if (!isRecording) return; 
         isRecording = false;
@@ -675,53 +685,36 @@
             recordBtn.classList.remove('recording');
         }
 
-        // 先關辨識器
-        if (recognition) {
-            try { recognition.stop(); } catch (e) { console.log(e); }
-        }
-
-        // 後關錄音器，觸發 mediaRecorder.onstop 進行最終裁決與 Blob 綁定
+        // 只關閉 MediaRecorder 本身，這會觸發上面的 mediaRecorder.onstop
+        // 絕對不要去動到常駐的 currentStream 和 recognition！
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-            try { mediaRecorder.stop(); } catch(e) { console.error(e); }
-        }
-    }
-
-    // 📝 最終裁決邏輯
-    function executeFinalComparison() {
-        const feedbackMsg = document.getElementById('feedback-message');
-        const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；!,，。]/g, '');
-        const studentSpeechClean = finalTranscript.replace(/[\s\?\.；!,，。]/g, '');
-
-        if (!finalTranscript) {
-            feedbackMsg.innerText = "❌ 系統沒有辨識到有效的韓語發音，請再試一次。";
-            feedbackMsg.className = "feedback text-danger";
-            return;
-        }
-
-        if (studentSpeechClean === cleanTarget) {
-            feedbackMsg.innerHTML = `🎉 發音正確！過關！<br><small style="color:gray;">(辨識結果: "${finalTranscript}")</small>`;
-            feedbackMsg.className = "feedback text-success";
-            
-            if (currentMode === 'expert') {
-                expertProgress[currentIdx] = true;
-                saveProgress();
-                updateKeypadStatus();
-                updateSubmitButton();
+            try { 
+                mediaRecorder.stop(); 
+            } catch(e) { 
+                console.error("停止錄音器失敗:", e); 
             }
-        } else {
-            feedbackMsg.innerHTML = `❌ 發音似乎不太對，再試一次！<br><small style="color:gray;">(系統聽到: "${finalTranscript}")</small>`;
-            feedbackMsg.className = "feedback text-danger";
         }
     }
 
-    // 🎧 回放我的聲音
+    // 🎧 終極修正：回放我的聲音
     function playMyVoice() {
+        if (isRecording) {
+            stopRecordingProcess();
+        }
+
         if (audioPlayback.src) {
             try {
-                audioPlayback.currentTime = 0; // 每次播放都拉回最開頭
-                audioPlayback.play();
+                audioPlayback.currentTime = 0; 
+                // 💡 很多瀏覽器不允許在音訊載入完畢前播放，用 play() 的 Promise 來提高穩定度
+                const playPromise = audioPlayback.play();
+                if (playPromise !== undefined) {
+                    playPromise.catch(error => {
+                        console.error("播放失敗，嘗試重新載入:", error);
+                        audioPlayback.load();
+                        setTimeout(() => { audioPlayback.play(); }, 100);
+                    });
+                }
             } catch (err) {
-                alert("播放被瀏覽器阻擋，請再試一次！");
                 console.error(err);
             }
         } else {
