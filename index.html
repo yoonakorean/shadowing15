@@ -492,24 +492,27 @@
         }
     }
 
-    // 🎧 回放聲音
+ // 🎧 回放聲音 (修正版：精準對接錄音生成的音訊網址變數)
     function playMyVoice() {
         if (isRecording) {
             stopRecordingProcess();
         }
 
-        if (audioPlayback.src) {
+        // 確保讀取與 mediaRecorder.onstop 寫入時完全一致的全域變數 audioUrl
+        if (audioUrl) { 
             try {
+                audioPlayback.src = audioUrl; // 確保在播放前重新將網址綁定給 audio 元件
                 audioPlayback.currentTime = 0; 
                 const playPromise = audioPlayback.play();
                 if (playPromise !== undefined) {
                     playPromise.catch(error => {
+                        console.error("播放被瀏覽器攔截，嘗試重新載入:", error);
                         audioPlayback.load();
                         setTimeout(() => { audioPlayback.play(); }, 100);
                     });
                 }
             } catch (err) {
-                console.error(err);
+                console.error("回放音訊發生錯誤:", err);
             }
         } else {
             alert("目前還沒有可用的錄音檔喔！");
