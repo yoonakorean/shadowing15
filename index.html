@@ -645,7 +645,7 @@
         resetMicSleepTimer(); 
     }
 
-    // 🎤 控制錄音的開關
+   // 🎤 控制錄音的開關
     let startDelayTimeout;
     function toggleRecord() {
         if (!recognition || !globalStream) {
@@ -668,12 +668,19 @@
             feedbackMsg.className = "feedback";
             
             try {
-                recognition.start();
+                // 每次啟動前，確保舊的完全清空
+                window.speechSynthesis.cancel(); 
+                
                 if (mediaRecorder && mediaRecorder.state === "inactive") {
-                    mediaRecorder.start(10); // 每 10ms 注入一次數據，防止緩衝丟失
+                    mediaRecorder.start(10); 
                 }
+                
+                // 啟動辨識
+                recognition.start();
             } catch (e) {
-                console.error("啟動錄音元件失敗:", e);
+                console.warn("啟動時有舊殘留，嘗試強制重啟:", e);
+                // 如果因為上次沒關乾淨導致報錯，強迫中止再開一次
+                try { recognition.abort(); recognition.start(); } catch(err){}
             }
 
             startDelayTimeout = setTimeout(() => {
@@ -689,7 +696,7 @@
         }
     }
 
-    // 🛑 停止錄音（核心安全修正區，防止卡死）
+    // 🛑 停止錄音（終極安全防禦版，絕不卡死）
     function stopRecordingProcess() {
         if (!isRecording) return;
         isRecording = false;
@@ -700,21 +707,28 @@
             recordBtn.classList.remove('recording');
         }
 
-        // 1. 安全關閉語音引擎
+        // 核心修正：將兩者完全抽離，互不干涉
+        
+        // 1. 處理語音辨識（用 abort 強制斷開，比 stop 更不容易卡住狀態）
         try { 
-            recognition.stop(); 
+            recognition.abort(); 
+            console.log("🟢 辨識引擎已強制釋放");
         } catch(e){
-            console.warn("停止辨識器時發生非致命異常:", e);
+            console.warn("停止辨識器異常（可忽略）:", e);
         }
 
-        // 2. 安全關閉錄音器硬體封裝
+        // 2. 處理錄音硬體（確保一定會執行到這，觸發音訊打包）
         try { 
             if (mediaRecorder && mediaRecorder.state !== "inactive") {
                 mediaRecorder.stop(); 
+                console.log("🟢 錄音硬體已成功停止並封裝");
+            } else {
+                // 如果錄音器莫名其妙自己停了，手動把畫面救回來
+                document.getElementById('feedback-message').innerText = "⚠️ 錄音異常中斷，請再試一次。";
             }
         } catch(e){
-            console.error("停止錄音器時發生異常:", e);
-            document.getElementById('feedback-message').innerText = "⚠️ 彙整出現技術錯誤，請再試一次。";
+            console.error("停止錄音器嚴重異常:", e);
+            document.getElementById('feedback-message').innerText = "⚠️ 彙整出現技術錯誤，請重新整理網頁。";
         }
     }
 
