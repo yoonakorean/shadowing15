@@ -345,7 +345,7 @@
         "지수는 경찰이에요.", "지수는 태국 사람이에요.", "마크는 의사예요.", "마크는 호주 사람이에요.",
         "영민은 매니저예요.", "영민은 중국 사람이에요.", "리쿠는 사장님이에요.", "리쿠는 일본 사람이에요.",
         "아트를 간호사예요.", "아트를 캐나다 사람이에요.", "서리는 비서예요.", "서리는 필리핀 사람이에요.",
-        "민수는 변호사예요.", "민수는 베트남 사람이에요.", "아дам은 공무원이에요.", "아дам은 독일 사람이에요."
+        "민수는 변호사예요.", "민수는 베트남 사람이에요.", "아дам은 공務원이에요.", "아дам은 독일 사람이에요."
     ];
 
     let currentUser = "";
@@ -356,11 +356,11 @@
     let recognition;
     let isRecording = false;
     let mediaRecorder;
+    let globalStream = null; // 全域共享音訊串流
     let audioChunks = [];
     let audioUrl = null;
     let globalAudioPlayer = null;
 
-    // ⏱️ 麥克風自動休眠定時器變數 (5分鐘)
     let micSleepTimeout = null;
     const MIC_SLEEP_DURATION = 300000; 
 
@@ -399,7 +399,7 @@
         await loadSavedProgress();
         initKeypad();
         loadSentence(0);
-        initSpeechRecognition();
+        await initAudioAndSpeech(); // 🚀 關鍵調整：同時請求硬體並綁定
         updateLeaderboardView();
     }
 
@@ -467,6 +467,10 @@
         document.getElementById('main-container').style.display = 'none';
         document.getElementById('username-input').value = "";
         expertProgress = Array(20).fill(false);
+        if (globalStream) {
+            globalStream.getTracks().forEach(track => track.stop());
+            globalStream = null;
+        }
     }
 
     function initKeypad() {
@@ -538,7 +542,6 @@
         }
 
         const targetText = sentences[currentIdx];
-        console.log("正在播放標準韓文女聲：" + targetText);
         
         try {
             window.speechSynthesis.cancel(); 
@@ -570,48 +573,74 @@
         }
     }
 
-    // 🧠 麥克風辨識主引擎
-    function initSpeechRecognition() {
+    // 🧠 整合音訊流與語音辨識主引擎 (音訊共享架構)
+    async function initAudioAndSpeech() {
+        // 1. 初始化 Web Speech API
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
-            alert("瀏覽器不支援 Web Speech API。建議在電腦上使用 Chrome 瀏覽器！");
+            alert("瀏覽器不支援 Web Speech API。建議使用 Chrome 瀏覽器！");
             return;
         }
         recognition = new SpeechRecognition();
         recognition.lang = 'ko-KR';
-        recognition.continuous = true; 
+        recognition.continuous = false; // 🟢 改為 false 可大幅提高單句辨識彙整速度
         recognition.interimResults = false;
         recognition.maxAlternatives = 1;
 
         recognition.onresult = function(event) {
-            const latestResultIdx = event.results.length - 1;
-            const userSpeech = event.results[latestResultIdx][0].transcript.trim();
+            const userSpeech = event.results[0][0].transcript.trim();
             compareSpeech(userSpeech);
         };
 
-        recognition.onerror = function() {
+        recognition.onerror = function(e) {
+            console.error("辨識引擎錯誤:", e);
             if (isRecording) {
-                document.getElementById('feedback-message').innerText = "⚠️ 辨識失敗，請重新錄音。";
+                document.getElementById('feedback-message').innerText = "⚠️ 辨識失敗或無聲音，請重新錄音。";
                 document.getElementById('feedback-message').className = "feedback text-danger";
                 stopRecordingProcess();
             }
         };
 
-        // 綁定原生麥克風錄音（供回放自我聲音用）
-        navigator.mediaDevices.getUserMedia({ audio: true })
-            .then(stream => {
-                mediaRecorder = new MediaRecorder(stream);
-                mediaRecorder.ondataavailable = event => {
+        recognition.onend = function() {
+            // 當辨識自然結束且仍在錄音狀態，主動切斷
+            if (isRecording) {
+                stopRecordingProcess();
+            }
+        };
+
+        // 2. 取得唯一的全域麥克風權限串流
+        try {
+            globalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            
+            // 偵測目前瀏覽器支援的音訊編碼，確保回放相容性
+            let options = { mimeType: 'audio/webm' };
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                options = { mimeType: 'audio/ogg;codecs=opus' };
+            }
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                options = {}; // 讓瀏覽器用預設
+            }
+
+            mediaRecorder = new MediaRecorder(globalStream, options);
+            
+            mediaRecorder.ondataavailable = event => {
+                if (event.data && event.data.size > 0) {
                     audioChunks.push(event.data);
-                };
-                mediaRecorder.onstop = () => {
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                    audioUrl = URL.createObjectURL(audioBlob);
-                    document.getElementById('playback-btn').disabled = false;
-                };
-            }).catch(err => {
-                console.warn("無法取得錄音裝置（但不影響語音辨識判定）：", err);
-            });
+                }
+            };
+            
+            mediaRecorder.onstop = () => {
+                const mimeType = mediaRecorder.mimeType || 'audio/wav';
+                const audioBlob = new Blob(audioChunks, { type: mimeType });
+                audioUrl = URL.createObjectURL(audioBlob);
+                document.getElementById('playback-btn').disabled = false;
+                console.log("🟢 錄音快取包封裝完成，類型: " + mimeType);
+            };
+
+        } catch (err) {
+            console.error("無法取得錄音裝置權限：", err);
+            alert("無法開啟麥克風，請確保已允許網頁存取您的麥克風權限。");
+        }
 
         resetMicSleepTimer(); 
     }
@@ -619,7 +648,10 @@
     // 🎤 控制錄音的開關
     let startDelayTimeout;
     function toggleRecord() {
-        if (!recognition) return;
+        if (!recognition || !globalStream) {
+            alert("錄音系統未就緒，請重新登入或重新整理頁面。");
+            return;
+        }
         const recordBtn = document.getElementById('record-btn');
         const feedbackMsg = document.getElementById('feedback-message');
 
@@ -627,34 +659,37 @@
 
         if (!isRecording) {
             isRecording = true;
+            audioChunks = []; // 清空上一次的快取
+            document.getElementById('playback-btn').disabled = true;
+
             recordBtn.innerText = "🛑 停止錄音中...";
             recordBtn.classList.add('recording');
             feedbackMsg.innerText = "🎙️ 系統預熱中，請稍候...";
             feedbackMsg.className = "feedback";
             
-            recognition.start();
-            if (mediaRecorder && mediaRecorder.state === "inactive") {
-                audioChunks = [];
-                mediaRecorder.start();
+            try {
+                recognition.start();
+                if (mediaRecorder && mediaRecorder.state === "inactive") {
+                    mediaRecorder.start(10); // 每 10ms 注入一次數據，防止緩衝丟失
+                }
+            } catch (e) {
+                console.error("啟動錄音元件失敗:", e);
             }
 
             startDelayTimeout = setTimeout(() => {
                 if (isRecording) {
                     feedbackMsg.innerText = "🎤 請開始大聲跟讀！";
                 }
-            }, 250);
+            }, 150);
 
         } else {
             feedbackMsg.innerText = "⚙️ 正在彙整語音...";
             clearTimeout(startDelayTimeout);
-            
-            setTimeout(() => {
-                stopRecordingProcess();
-            }, 400); 
+            stopRecordingProcess();
         }
     }
 
-    // 🛑 停止錄音輔助函數
+    // 🛑 停止錄音（核心安全修正區，防止卡死）
     function stopRecordingProcess() {
         if (!isRecording) return;
         isRecording = false;
@@ -665,23 +700,29 @@
             recordBtn.classList.remove('recording');
         }
 
-        // 停止語音引擎
-        try { if (recognition) recognition.stop(); } catch(e){}
+        // 1. 安全關閉語音引擎
+        try { 
+            recognition.stop(); 
+        } catch(e){
+            console.warn("停止辨識器時發生非致命異常:", e);
+        }
 
-        // 停止錄音硬體並打包
-        if (mediaRecorder && mediaRecorder.state === "recording") {
-            try { mediaRecorder.stop(); } catch(e){}
+        // 2. 安全關閉錄音器硬體封裝
+        try { 
+            if (mediaRecorder && mediaRecorder.state !== "inactive") {
+                mediaRecorder.stop(); 
+            }
+        } catch(e){
+            console.error("停止錄音器時發生異常:", e);
+            document.getElementById('feedback-message').innerText = "⚠️ 彙整出現技術錯誤，請再試一次。";
         }
     }
 
     // 📝 語音比對與結果判決
     function compareSpeech(userText) {
-        try { if (recognition) recognition.stop(); } catch(e){}
-        
         const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；!,，。]/g, '');
         const cleanUser = userText.replace(/[\s\?\.；!,，。]/g, '');
         const feedbackMsg = document.getElementById('feedback-message');
-        const playbackBtn = document.getElementById('playback-btn');
 
         if (cleanTarget === cleanUser) {
             feedbackMsg.innerText = `🎉 合格！辨識結果："${userText}"`;
@@ -694,27 +735,33 @@
                 updateSubmitButton();
             }
         } else {
-            feedbackMsg.innerText = `❌ 不合格。您唸的是："${userText}" (請再試一次)`;
+            feedbackMsg.innerText = `❌ 不合格。您唸的是："${userText}"`;
             feedbackMsg.className = "feedback text-danger";
-        }
-
-        if (playbackBtn && audioUrl) {
-            playbackBtn.disabled = false;
         }
     }
 
     // 🎧 回放我的聲音
     function playMyVoice() {
         if (audioUrl) {
-            if (globalAudioPlayer) {
-                globalAudioPlayer.src = audioUrl;
-                globalAudioPlayer.play().catch(e => console.error("回放失敗：", e));
-            } else {
-                const audio = new Audio(audioUrl);
-                audio.play().catch(e => console.error("回放失敗：", e));
+            try {
+                if (globalAudioPlayer) {
+                    globalAudioPlayer.src = audioUrl;
+                    globalAudioPlayer.play().catch(e => {
+                        console.error("全域回放失敗：", e);
+                        // 備用方案
+                        const fallbackAudio = new Audio(audioUrl);
+                        fallbackAudio.play();
+                    });
+                } else {
+                    const audio = new Audio(audioUrl);
+                    audio.play();
+                }
+            } catch (err) {
+                alert("播放遭遇瀏覽器安全阻擋，請再試著按一次！");
+                console.error(err);
             }
         } else {
-            alert("目前還沒有錄音檔案喔！");
+            alert("目前還沒有錄音檔案，或者彙整尚未完成喔！");
         }
     }
     
