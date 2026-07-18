@@ -237,7 +237,7 @@
 </head>
 <body>
 
-<!-- 隱藏播放元件，用來暫存每一次點擊生成的 Blob URL -->
+<!-- 隱藏播放元件 -->
 <audio id="audioPlayback" style="display:none;"></audio>
 
 <!-- 登入遮罩 -->
@@ -332,7 +332,7 @@
     const sentences = [
         "이름은 뭐예요?", "어느 나라 사람이에요?", "어디에서 왔어요?", "직업은 뭐예요?",
         "지수는 경찰이에요.", "지수는 태국 사람이에요.", "마크는 의사예요.", "마크는 호주 사람이에요.",
-        "영敏은 매니저예요.", "영민은 중국 사람이에요.", "리쿠는 사장님이에요.", "리쿠는 日本 사람이에요.",
+        "영민은 매니저예요.", "영민은 중국 사람이에요.", "리쿠는 사장님이에요.", "리쿠는 일본 사람이에요.",
         "아트는 간호사예요.", "아트는 캐나다 사람이에요.", "서리는 비서예요.", "서리는 필리핀 사람이에요.",
         "민수는 변호사예요.", "민수는 베트남 사람이에요.", "아담은 공무원이에요.", "아담은 독일 사람이에요."
     ];
@@ -353,7 +353,7 @@
 
     const audioPlayback = document.getElementById('audioPlayback');
 
-    // 🎤 麥克風辨識主引擎與常駐初始化
+    // 🎤 麥克風辨識主引擎
     function initSpeechEngine() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
@@ -362,15 +362,24 @@
         }
         recognition = new SpeechRecognition();
         recognition.lang = 'ko-KR';
-        recognition.continuous = true; 
-        recognition.interimResults = false;
+        recognition.continuous = false; // 改為單次辨識，更適合短句結算，避免漏字
+        recognition.interimResults = true; // 開啟即時結果擷取，防止結束時沒拿到字
         recognition.maxAlternatives = 1;
 
         recognition.onresult = function(event) {
-            const latestResultIdx = event.results.length - 1;
-            const userSpeech = event.results[latestResultIdx][0].transcript.trim();
-            finalTranscript = userSpeech; 
-            console.log("辨識到文字: ", finalTranscript);
+            let interimTranscript = '';
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                if (event.results[i].isFinal) {
+                    finalTranscript += event.results[i][0].transcript;
+                } else {
+                    interimTranscript += event.results[i][0].transcript;
+                }
+            }
+            // 只要有收到任何辨識文字碎片，就即時更新給全域變數
+            if (interimTranscript) {
+                finalTranscript = interimTranscript;
+            }
+            console.log("即時辨識: ", finalTranscript);
         };
 
         recognition.onerror = function(event) {
@@ -421,28 +430,23 @@
                 };
 
                 mediaRecorder.onstop = () => {
-                    // 📝 練習模式：生成錄音檔以供回放
-                    if (currentMode === 'practice' && audioChunks.length > 0) {
+                    if (audioChunks.length > 0) {
                         const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
                         audioUrl = URL.createObjectURL(audioBlob);
+                        
                         audioPlayback.src = audioUrl; 
                         audioPlayback.load();         
                         playbackBtn.disabled = false; 
                     }
                     
-                    // 執行比對與回饋裁決
+                    // 執行純文字比對裁決
                     executeFinalComparison();
                 };
 
                 isRecording = true;
                 
-                // 依據模式啟動對應底層組件
-                if (currentMode === 'practice') {
-                    mediaRecorder.start(5); // 練習模式：僅錄音不判別
-                } else {
-                    mediaRecorder.start(5); // 挑戰模式：啟動錄音與辨識
-                    recognition.start();
-                }
+                mediaRecorder.start(5); 
+                recognition.start();
 
                 recordBtn.innerText = "🛑 點擊停止錄音並判定";
                 recordBtn.classList.add('recording');
@@ -471,7 +475,7 @@
         }
     }
 
-    // 🛑 停止錄音進程
+    // 🛑 停止錄音
     function stopRecordingProcess() {
         if (!isRecording) return; 
         isRecording = false;
@@ -484,18 +488,12 @@
 
         try { recognition.stop(); } catch(e){}
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-            try { 
-                mediaRecorder.stop(); 
-            } catch(e) { 
-                console.error("停止錄音器失敗:", e); 
-            }
+            try { mediaRecorder.stop(); } catch(e) {}
         }
     }
 
-    // 🎧 回放我的聲音 (僅限練習模式使用)
+    // 🎧 回放聲音
     function playMyVoice() {
-        if (currentMode !== 'practice') return; // 挑戰模式禁止回放
-
         if (isRecording) {
             stopRecordingProcess();
         }
@@ -506,7 +504,6 @@
                 const playPromise = audioPlayback.play();
                 if (playPromise !== undefined) {
                     playPromise.catch(error => {
-                        console.error("播放失敗:", error);
                         audioPlayback.load();
                         setTimeout(() => { audioPlayback.play(); }, 100);
                     });
@@ -519,72 +516,37 @@
         }
     }
 
-    // 📝 模糊比對（容錯率演算法）
-    function getSimilarity(s1, s2) {
-        let longer = s1.length > s2.length ? s1 : s2;
-        let shorter = s1.length > s2.length ? s2 : s1;
-        if (longer.length === 0) return 1.0;
-        return (longer.length - editDistance(longer, shorter)) / parseFloat(longer.length);
-    }
-
-    function editDistance(s1, s2) {
-        let costs = [];
-        for (let i = 0; i <= s1.length; i++) {
-            let lastValue = i;
-            for (let j = 0; j <= s2.length; j++) {
-                if (i == 0) costs[j] = j;
-                else {
-                    if (j > 0) {
-                        let newValue = costs[j - 1];
-                        if (s1.charAt(i - 1) != s2.charAt(j - 1))
-                            newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
-                        costs[j - 1] = lastValue;
-                        lastValue = newValue;
-                    }
-                }
-            }
-            if (i > 0) costs[s2.length] = lastValue;
-        }
-        return costs[s2.length];
-    }
-
-    // 📝 比對裁決與回饋展示
+    // 📝 裁決改為：直接判斷是否合格（取消相似度分數）
     function executeFinalComparison() {
         const feedbackMsg = document.getElementById('feedback-message');
         
-        // 📝 練習模式：刪除聲音判斷功能，只提示已錄音
-        if (currentMode === 'practice') {
-            feedbackMsg.innerHTML = `🎵 錄音完成！您現在可以點擊右側回放聲音。`;
-            feedbackMsg.className = "feedback text-success";
-            return;
-        }
-
-        // 🔥 挑戰模式：不打分數直接判定是否合格，不回放
+        // 清理標點符號與空白
         const cleanTarget = sentences[currentIdx].replace(/[\s\?\.；!,，。]/g, '').toLowerCase();
         const studentSpeechClean = finalTranscript.replace(/[\s\?\.；!,，。]/g, '').toLowerCase();
 
         if (!studentSpeechClean) {
-            feedbackMsg.innerHTML = `❌ 不合格！系統沒聽到聲音，請再試一次。`;
+            feedbackMsg.innerHTML = `⚠️ 系統沒聽到聲音，請再試一次！<br><small style="color:gray;">(請靠近麥克風並大聲跟讀)</small>`;
             feedbackMsg.className = "feedback text-danger";
             return; 
         }
 
-        const similarityScore = getSimilarity(studentSpeechClean, cleanTarget);
-
+        // 純文字包含或部分相似即判定合格
         if (studentSpeechClean === cleanTarget || 
             studentSpeechClean.includes(cleanTarget) || 
             cleanTarget.includes(studentSpeechClean) ||
-            similarityScore >= 0.70) {
+            cleanTarget.slice(0, 3) === studentSpeechClean.slice(0, 3)) { // 增加前置詞容錯率
             
-            feedbackMsg.innerHTML = `🎉 【過關】發音合格！<br><small style="color:gray;">(辨識結果: "${finalTranscript}")</small>`;
+            feedbackMsg.innerHTML = `🎉 【合格】發音正確！<br><small style="color:gray;">(辨識結果: "${finalTranscript}")</small>`;
             feedbackMsg.className = "feedback text-success";
             
-            expertProgress[currentIdx] = true;
-            saveProgress();
-            updateKeypadStatus();
-            updateSubmitButton();
+            if (currentMode === 'expert') {
+                expertProgress[currentIdx] = true;
+                saveProgress();
+                updateKeypadStatus();
+                updateSubmitButton();
+            }
         } else {
-            feedbackMsg.innerHTML = `❌ 不合格！發音不夠準確，請再試一次。<br><small style="color:gray;">(系統聽到: "${finalTranscript}")</small>`;
+            feedbackMsg.innerHTML = `❌ 【不合格】發音不太對，再試一次！<br><small style="color:gray;">(系統聽到: "${finalTranscript}")</small>`;
             feedbackMsg.className = "feedback text-danger";
         }
     }
@@ -668,7 +630,7 @@
             const btn = document.getElementById(`num-btn-${i}`);
             if (!btn) continue;
             btn.classList.toggle('active', i === currentIdx);
-            btn.classList.toggle('passed', expertProgress[i]); // 狀態同步
+            btn.classList.toggle('passed', currentMode === 'expert' && expertProgress[i]);
         }
     }
 
@@ -676,23 +638,20 @@
         currentIdx = index;
         const display = document.getElementById('sentence-display');
         const hint = document.getElementById('mode-hint');
-        const playbackBtn = document.getElementById('playback-btn');
         
         if (currentMode === 'practice') {
             display.innerText = `${index + 1}. ${sentences[index]}`;
             display.classList.remove('sentence-hidden');
             hint.innerText = "練習模式";
             hint.style.background = "#DBEAFE"; hint.style.color = "#1E40AF";
-            playbackBtn.style.display = "inline-flex"; // 練習模式顯示回放鈕
         } else {
             display.innerText = `${index + 1}. 🔒 [ 語音播音後，請跟讀此句 ]`;
             display.classList.add('sentence-hidden');
             hint.innerText = "高手挑戰";
             hint.style.background = "#FEE2E2"; hint.style.color = "#991B1B";
-            playbackBtn.style.display = "none"; // 挑戰模式完全隱藏回放鈕
         }
 
-        playbackBtn.disabled = true;
+        document.getElementById('playback-btn').disabled = true;
         audioPlayback.removeAttribute('src'); 
         document.getElementById('feedback-message').innerText = "準備好後，點擊「開始錄音」";
         document.getElementById('feedback-message').className = "feedback";
@@ -713,7 +672,6 @@
         loadSentence(currentIdx);
     }
 
-    // 🔊 播放標準女聲
     function speakStandard() {
         if (isRecording) {
             stopRecordingProcess();
