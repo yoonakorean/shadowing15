@@ -352,41 +352,37 @@
 
     const audioPlayback = document.getElementById('audioPlayback');
 
-  // 🚀 回歸最單純的初始化
+ // 🚀 1. 語音辨識初始化（回歸簡單、精確、單次觸發）
     function initSpeechEngine() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (SpeechRecognition) {
             recognition = new SpeechRecognition();
             recognition.lang = 'ko-KR'; 
-            // 轉回單次辨識，不常駐，不搞熱身
-            recognition.continuous = false; 
+            recognition.continuous = false; // 單次辨識，講完就停，最穩定
             recognition.interimResults = false; 
 
             recognition.onresult = (event) => {
                 if (event.results.length > 0) {
                     finalTranscript = event.results[0][0].transcript;
-                    console.log("辨識成功接收文字:", finalTranscript);
+                    console.log("=== 語音辨識成功抓到文字 ===", finalTranscript);
                 }
-            };
-
-            recognition.onend = () => {
-                // 辨識完全結束了，才進行最終的比對判定
-                executeFinalComparison();
             };
 
             recognition.onerror = (event) => {
-                console.error("辨識錯誤:", event.error);
-                if (event.error === 'no-speech') {
-                    document.getElementById('feedback-message').innerText = "❌ 系統沒有聽到清楚的韓語發音，請再試一次。";
-                    document.getElementById('feedback-message').className = "feedback text-danger";
-                }
+                console.error("辨識引擎回報錯誤:", event.error);
+            };
+
+            // 辨識自然結束，或是被手動停止後，觸發比對
+            recognition.onend = () => {
+                console.log("辨識進程結束，執行最終分數判定");
+                executeFinalComparison();
             };
         } else {
             alert("您的瀏覽器不支援 Web Speech API。建議使用 Chrome 瀏覽器！");
         }
     }
 
-    // 🎤 錄音控制：一次只做一件事，錄音期間辨識引擎是關閉的
+    // 🎤 2. 控制開關（同時啟動、各司其職，絕不拖泥帶水）
     async function toggleRecord() {
         if (!recognition) {
             alert("語音辨識系統未就緒，請重新整理頁面。");
@@ -397,15 +393,18 @@
         const feedbackMsg = document.getElementById('feedback-message');
 
         if (!isRecording) {
-            // 1. 停止所有播放
+            // 停止所有正在播放的語音
             window.speechSynthesis.cancel();
             try { audioPlayback.pause(); } catch(e){}
 
             try {
-                finalTranscript = ""; 
-                // 2. 獲取乾淨的麥克風
+                finalTranscript = ""; // 清空上一次的辨識結果
+                
+                // 獲取麥克風權限
                 currentStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 audioChunks = [];
+                
+                // 初始化本地錄音機
                 mediaRecorder = new MediaRecorder(currentStream);
                 
                 mediaRecorder.ondataavailable = (event) => {
@@ -414,7 +413,7 @@
                     }
                 };
 
-                // 3. 錄音機完全關閉後的處理
+                // 當錄音機停止時，儲存音檔並徹底關閉硬體軌道
                 mediaRecorder.onstop = () => {
                     if (audioChunks.length > 0) {
                         const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
@@ -422,49 +421,41 @@
                         
                         audioPlayback.src = audioUrl; 
                         audioPlayback.load();         
-                        playbackBtn.disabled = false; // 錄音檔存好了，回放按鈕一定可以使用
-                        console.log("🟢 錄音檔回放就緒。");
+                        playbackBtn.disabled = false; // 亮起回放按鈕
+                        console.log("🟢 錄音檔成功存檔！");
                     }
 
-                    // 4. 徹底關閉麥克風硬體軌道，把硬體還給系統
+                    // 確實關閉麥克風硬體
                     if (currentStream) {
                         currentStream.getTracks().forEach(track => track.stop());
                         currentStream = null;
                     }
-
-                    // 5. 錄音這條線完全安全收尾了，現在才啟動辨識引擎去聽剛才的聲音
-                    feedbackMsg.innerText = "⚙️ 正在辨識發音...";
-                    try {
-                        recognition.start();
-                    } catch(e) {
-                        console.error("辨識啟動失敗:", e);
-                        executeFinalComparison();
-                    }
                 };
 
-                // 開始錄音
+                // 🔥 核心改變：兩者【同時啟動】！共享此時暢通的麥克風
                 isRecording = true;
                 mediaRecorder.start(); 
+                recognition.start();   
 
                 recordBtn.innerText = "🛑 點擊停止錄音並判定";
                 recordBtn.classList.add('recording');
-                feedbackMsg.innerText = "🎤 正在錄音中，請開始跟讀...";
+                feedbackMsg.innerText = "🎤 正在錄音與辨識中，請開口讀句子...";
                 feedbackMsg.className = "feedback";
                 playbackBtn.disabled = true;
 
             } catch (err) {
-                console.error("麥克風失敗:", err);
-                feedbackMsg.innerText = "⚠️ 無法存取麥克風，請檢查權限設定";
+                console.error("啟動錄音裝置失敗:", err);
+                feedbackMsg.innerText = "⚠️ 麥克風開啟失敗，請檢查權限設定";
                 feedbackMsg.className = "feedback text-danger";
                 isRecording = false;
             }
         } else {
-            // 點擊停止：單純把錄音機關掉
+            feedbackMsg.innerText = "⚙️ 正在結算分數中...";
             stopRecordingProcess();
         }
     }
 
-    // 🛑 停止錄音
+    // 🛑 3. 停止錄音與辨識
     function stopRecordingProcess() {
         if (!isRecording) return; 
         isRecording = false;
@@ -475,16 +466,21 @@
             recordBtn.classList.remove('recording');
         }
 
+        // 同時命令錄音機與辨識引擎「停止收音」
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-            mediaRecorder.stop(); // 觸發上面的 mediaRecorder.onstop
+            try { mediaRecorder.stop(); } catch(e){}
+        }
+        if (recognition) {
+            try { recognition.stop(); } catch(e){} 
+            // recognition.stop() 會主動觸發 recognition.onend，進而執行比對
         }
     }
 
-    // 🎧 回放聲音
+    // 🎧 4. 回放我的聲音
     function playMyVoice() {
         if (audioPlayback.src) {
             audioPlayback.currentTime = 0;
-            audioPlayback.play().catch(e => console.error("播放失敗:", e));
+            audioPlayback.play().catch(e => console.error("播放音檔失敗:", e));
         }
     }
 
